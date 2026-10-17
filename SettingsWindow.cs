@@ -65,7 +65,7 @@ internal sealed class SettingsWindow : Window
 
         var selection = Card(0, "确认文字选区，再出现按钮"); selection.Children.Add(Ui.Hint("拖选、双击或键盘选词后确认有效文字，鼠标附近出现按钮，并避让常见划词菜单。点击才发送翻译；按钮不抢焦点。无法读取选区的应用，可在应用规则中开启兼容模式。"));
         Toggle(selection, "划词后显示浮动翻译按钮", draft.SelectionButtonEnabled, v => draft.SelectionButtonEnabled = v, "SelectionButtonEnabled");
-        var keys = Card(0, "全局快捷键"); Shortcut(keys, "选中文字 → 翻译", draft.SelectionHotkey, v => draft.SelectionHotkey = v, "SelectionShortcut"); Shortcut(keys, "截图 → OCR 翻译", draft.ScreenshotHotkey, v => draft.ScreenshotHotkey = v, "ScreenshotShortcut"); Shortcut(keys, "总暂停 / 恢复", draft.PauseHotkey, v => draft.PauseHotkey = v, "PauseShortcut"); Shortcut(keys, "呼出输入翻译栏", draft.ManualHotkey, v => draft.ManualHotkey = v, "ManualShortcut"); shortcutNotice.Name = "ShortcutNotice"; keys.Children.Add(shortcutNotice);
+        var keys = Card(0, "全局快捷键"); Shortcut(keys, "选中文字 → 翻译", draft.SelectionHotkey, v => draft.SelectionHotkey = v, "SelectionShortcut"); Shortcut(keys, "截图 → OCR 翻译", draft.ScreenshotHotkey, v => draft.ScreenshotHotkey = v, "ScreenshotShortcut"); Shortcut(keys, "总暂停 / 恢复", draft.PauseHotkey, v => draft.PauseHotkey = v, "PauseShortcut"); Shortcut(keys, "输入翻译栏：打开 / 关闭", draft.ManualHotkey, v => draft.ManualHotkey = v, "ManualShortcut"); shortcutNotice.Name = "ShortcutNotice"; keys.Children.Add(shortcutNotice);
         Toggle(keys, "总暂停时也禁用输入翻译栏呼出键", draft.PauseManual, v => draft.PauseManual = v);
         var compatibility = Card(0, "取词与消失行为"); Number(compatibility, "复制等待上限（300–2500 毫秒）", draft.CopyWaitMs, 300, 2500, v => draft.CopyWaitMs = v); Number(compatibility, "兼容模式按钮兜底时间（3–60 秒）", draft.CompatibilityTimeout, 3, 60, v => draft.CompatibilityTimeout = v);
         compatibility.Children.Add(Ui.Hint("正常选区没有固定八秒超时；悬停不消失。点击外部、Esc、切换应用、滚动或选区失效时收起。兼容模式的计时会在鼠标靠近时暂停。"));
@@ -109,7 +109,7 @@ internal sealed class SettingsWindow : Window
         BuildRules();
         var manual = Card(5, "停止输入后自动翻译"); Number(manual, "停顿时间（300–2000 毫秒）", draft.AutoTranslateDelay, 300, 2000, v => draft.AutoTranslateDelay = v);
         LanguageChoice(manual, "默认源语言", draft.ManualSource, true, v => draft.ManualSource = v); LanguageChoice(manual, "默认目标语言", draft.ManualTarget, false, v => draft.ManualTarget = v); Toggle(manual, "输入翻译栏始终置顶", draft.ManualTopmost, v => draft.ManualTopmost = v);
-        manual.Children.Add(Ui.Hint("中文／日文输入法确认文字后才计时。Ctrl+Enter 可立即翻译，Enter 换行。点击外部不关闭；关闭按钮清空原文和译文。修改输入会使旧结果过期，不保存历史。"));
+        manual.Children.Add(Ui.Hint("中文／日文输入法确认文字后才计时。Ctrl+Enter 可立即翻译，Enter 换行。使用同一快捷键打开／关闭输入栏（默认 Alt+T，可自定义），Esc 关闭；输入法组词时先由输入法处理 Esc。点击外部不关闭；关闭会清空原文和译文。修改输入会使旧结果过期，不保存历史。"));
         var word = Card(5, "孤立单词与语种歧义"); word.Children.Add(Ui.Hint("源语言可手动指定，应用规则可预设源语种。AI 单词模式最多提供三个常见释义；普通翻译保持原服务结果，不自动改用 AI 或增加费用。气泡右上角的更多菜单可以将原文带入翻译栏编辑。"));
         UpdatePreview(); ShowPage(0);
         apply.Click += (_, _) =>
@@ -209,4 +209,3 @@ internal sealed class SettingsWindow : Window
         catch (Exception ex) { shortcutNotice.Text = ex.Message; ShowPage(0); return false; }
     }
 }
-

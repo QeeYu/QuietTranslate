@@ -20,6 +20,7 @@ internal sealed class SelectionTrigger : IDisposable
     private Native.Point down, lastUp;
     private Native.Rect originalWindow;
     private long lastUpTime;
+    private bool dragScrolled;
     private CancellationTokenSource? pending;
     private SelectionButtonWindow? popup;
     internal SelectionButtonWindow? VisibleButton => popup;
@@ -58,8 +59,14 @@ internal sealed class SelectionTrigger : IDisposable
             if (kind is 0x201 or 0x204 or 0x207 or 0x20B or 0x20A or 0x20E)
             {
                 var point = Marshal.PtrToStructure<Native.Point>(data);
+                if (kind is 0x20A or 0x20E && dragWindow != IntPtr.Zero && Native.Down(1) && Native.GetForegroundWindow() == dragWindow)
+                {
+                    // Wheel input during a held selection is part of the same gesture.
+                    HidePopup(); dragScrolled = true; State = "drag scrolling";
+                    return Native.CallNextHookEx(hook, code, message, data);
+                }
                 Native.GetWindowThreadProcessId(Native.WindowFromPoint(point), out uint clickedProcess);
-                dragWindow = IntPtr.Zero;
+                dragWindow = IntPtr.Zero; dragScrolled = false;
                 if (clickedProcess != Environment.ProcessId)
                 {
                     Hide();
@@ -75,11 +82,13 @@ internal sealed class SelectionTrigger : IDisposable
             else if (kind == 0x202 && dragWindow != IntPtr.Zero)
             {
                 var window = dragWindow; dragWindow = IntPtr.Zero; var point = Marshal.PtrToStructure<Native.Point>(data);
-                bool dragged = Math.Abs(point.X - down.X) >= 6 || Math.Abs(point.Y - down.Y) >= 6;
+                bool dragged = dragScrolled || Math.Abs(point.X - down.X) >= 6 || Math.Abs(point.Y - down.Y) >= 6;
+                dragScrolled = false;
                 bool doubled = window == lastWindow && Environment.TickCount64 - lastUpTime <= System.Windows.Forms.SystemInformation.DoubleClickTime && Math.Abs(point.X - lastUp.X) < 5 && Math.Abs(point.Y - lastUp.Y) < 5;
                 lastUp = point; lastUpTime = Environment.TickCount64; lastWindow = window;
                 Native.GetWindowRect(window, out var now);
                 if ((dragged || doubled) && SameRect(now, originalWindow)) Queue(window, point, false);
+                else State = $"released: drag={dragged}, sameWindowBounds={SameRect(now, originalWindow)}";
             }
         }
         return Native.CallNextHookEx(hook, code, message, data);
@@ -126,7 +135,8 @@ internal sealed class SelectionTrigger : IDisposable
         catch { /* Inaccessible apps keep working; never simulate clipboard reads just to show a button. */ }
     }
     internal static bool SameRect(Native.Rect a, Native.Rect b) => a.Left == b.Left && a.Right == b.Right && a.Top == b.Top && a.Bottom == b.Bottom;
-    internal void Hide() { pending?.Cancel(); pending?.Dispose(); pending = null; popup?.Close(); popup = null; }
+    private void HidePopup() { pending?.Cancel(); pending?.Dispose(); pending = null; popup?.Close(); popup = null; }
+    internal void Hide() { dragWindow = IntPtr.Zero; dragScrolled = false; HidePopup(); }
     public void Dispose() { Enabled = false; Hide(); }
 }
 

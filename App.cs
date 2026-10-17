@@ -51,6 +51,8 @@ public sealed partial class App : Application
             if (args.Length > 0 && args[0] == "--hover-test") { int code = await HoverTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--lifecycle-test") { int code = await app.RunLifecycleAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--selection-fixture") { SelfTest.OpenSelectionFixture(app); return; }
+            if (args.Length > 0 && args[0] == "--scroll-selection-fixture") { InteractionTest.OpenFixture(app); return; }
+            if (args.Length > 0 && args[0] == "--interaction-test") { int code = await InteractionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             app.Start();
         };
         app.Exit += (_, _) => app.Cleanup(); return app.Run();
@@ -69,7 +71,7 @@ public sealed partial class App : Application
         showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(showWindow, (_, _) => { if (!exiting) Dispatcher.BeginInvoke(new Action(OpenSettings)); }, null, Timeout.Infinite, false);
         try { settings = initial ?? Settings.Load(); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); Shutdown(); return; }
         Ui.Theme = settings.Theme;
-        hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) OpenManual(); else _ = ExecuteAsync(id == 2); };
+        hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) ToggleManual(); else _ = ExecuteAsync(id == 2); };
         selectionTrigger = new SelectionTrigger((source, anchor, text) => _ = ExecuteAsync(false, source, anchor, text), () => settings, () => mode == AppMode.Compatibility);
         trayMenu = new TrayMenu(() => OpenManual(), () => _ = ExecuteAsync(true), OpenImage, TogglePause, OpenSettings, () => Shutdown());
         tray = new Forms.NotifyIcon { Icon = AppIcons.Active, Text = "轻译 · 已启用", Visible = true }; tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(OpenSettings));
@@ -136,6 +138,11 @@ public sealed partial class App : Application
         if (window.WindowState == WindowState.Minimized) window.WindowState = WindowState.Normal;
         if (!ReferenceEquals(manual, window) || !window.IsVisible) return;
         window.Activate(); if (text != null && ReferenceEquals(manual, window) && window.IsVisible) window.SetInput(text, source);
+    }
+    private void ToggleManual()
+    {
+        if (manual is { IsVisible: true } window && window.WindowState != WindowState.Minimized) window.Close();
+        else OpenManual();
     }
     private BubbleWindow ShowBubble(Native.Rect anchor, IntPtr foreground, CancellationTokenSource owner)
     {

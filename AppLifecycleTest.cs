@@ -53,11 +53,13 @@ public sealed partial class App
                 window.Close(); await Task.Delay(120); if (service.ContextMenu.IsOpen || manual != null) throw new Exception("service menu survived close");
                 OpenManual(); if (manual is not { IsVisible: true }) throw new Exception("fresh panel missing"); manual.Close();
             });
-            await Test("Global manual shortcut opens/restores one panel after close", async () =>
+            await Test("Custom manual shortcut toggles open and closed; Esc closes and clears content", async () =>
             {
                 Native.TestChord(Hotkey.Parse(isolated.ManualHotkey)); await Task.Delay(180); var first = manual ?? throw new Exception("manual hotkey did not open panel");
-                Native.TestChord(Hotkey.Parse(isolated.ManualHotkey)); await Task.Delay(120); if (!ReferenceEquals(first, manual)) throw new Exception("manual hotkey duplicated panel");
-                first.Close(); Native.TestChord(Hotkey.Parse(isolated.ManualHotkey)); await Task.Delay(180); if (manual is not { IsVisible: true }) throw new Exception("manual hotkey did not reopen panel"); manual.Close();
+                first.Input.Text = "Synthetic content to clear on close";
+                Native.TestChord(Hotkey.Parse(isolated.ManualHotkey)); await Task.Delay(120); if (manual != null || first.IsVisible || first.Input.Text.Length > 0) throw new Exception("manual shortcut did not close and clear");
+                Native.TestChord(Hotkey.Parse(isolated.ManualHotkey)); await Task.Delay(180); var reopened = manual ?? throw new Exception("manual hotkey did not reopen panel");
+                Native.TapKey(0x1B); await Task.Delay(140); if (manual != null || reopened.IsVisible) throw new Exception("Esc did not close manual panel");
             });
         }
         catch (Exception ex) { errors.Add(ex.ToString()); }

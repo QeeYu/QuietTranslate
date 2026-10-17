@@ -1,4 +1,4 @@
-using System;
+﻿using System;
 using System.Globalization;
 using System.Linq;
 using System.Text.Json;
@@ -28,6 +28,7 @@ internal sealed class ManualWindow : Window
     private readonly TextBlock inputHint = new() { Text = "输入文字，停顿后自动翻译", IsHitTestVisible = false, FontSize = 14, Margin = new Thickness(12, 30, 36, 10), TextWrapping = TextWrapping.Wrap };
     private readonly TextBlock outputHint = new() { Text = "译文会显示在这里", IsHitTestVisible = false, FontSize = 14, Margin = new Thickness(12, 30, 36, 10), TextWrapping = TextWrapping.Wrap };
     private readonly Button copy = Ui.IconButton("\uE8C8", "复制译文"), retry = new() { Content = "翻译", Name = "TranslateNow", FontSize = 12 }, swap = Ui.IconButton("\uE8AB", "交换语言"), copyInput = Ui.IconButton("\uE8C8", "复制原文");
+    private readonly Button close = Ui.IconButton("\uE8BB", "关闭输入栏");
     private readonly DispatcherTimer debounce = new(), layout = new() { Interval = TimeSpan.FromMilliseconds(55) };
     private CancellationTokenSource? active;
     private bool composing, closed, initializing, paused;
@@ -48,7 +49,7 @@ internal sealed class ManualWindow : Window
         var root = new StackPanel(); surface.Child = root;
         var header = new DockPanel { LastChildFill = true, Height = 30, Margin = new Thickness(-3, -2, -3, 9), Background = Brushes.Transparent };
         root.Children.Add(header);
-        var close = Ui.IconButton("\uE8BB", "关闭输入栏 · 清空原文与译文"); close.Name = "ManualClose"; close.Width = 26; close.Click += (_, _) => Close(); DockPanel.SetDock(close, Dock.Right); header.Children.Add(close);
+        close.Name = "ManualClose"; close.Width = 26; close.Click += (_, _) => Close(); DockPanel.SetDock(close, Dock.Right); header.Children.Add(close); UpdateCloseHint();
         providers.ItemsSource = Enum.GetValues<Provider>().Select(Settings.Name).ToArray();
         sources.ItemsSource = ApiSupport.Languages.Select(ApiSupport.LanguageName).ToArray(); targets.ItemsSource = ApiSupport.Languages.Skip(1).Select(ApiSupport.LanguageName).ToArray(); LoadChoices();
         var service = Picker(providers, "翻译服务", "ManualService", true); DockPanel.SetDock(service, Dock.Right); header.Children.Add(service);
@@ -65,7 +66,7 @@ internal sealed class ManualWindow : Window
         Field(root, Input, copyInput, inputHint, "原文", false); Field(root, Output, copy, outputHint, "译文", true);
         var feedback = new DockPanel { Margin = new Thickness(3, 1, 3, 0), LastChildFill = true, Height = 17 };
         Ui.Bind(count, TextBlock.ForegroundProperty, "Muted"); DockPanel.SetDock(count, Dock.Right); feedback.Children.Add(count); status.Margin = new Thickness(0, 0, 10, 0); feedback.Children.Add(status); root.Children.Add(feedback);
-        copy.Name = "CopyOutput"; copyInput.Name = "CopyInput"; copy.IsEnabled = false; copyInput.IsEnabled = false; SetStatus("停顿后自动翻译");
+        copy.Name = "CopyOutput"; copyInput.Name = "CopyInput"; copy.IsEnabled = false; copyInput.IsEnabled = false; SetStatus("停顿后自动翻译 · Esc 关闭");
         copyInput.Click += (_, _) => Copy(Input.Text, "原文"); copy.Click += (_, _) => { if (copy.IsEnabled) Copy(Output.Text, "译文"); };
         layout.Tick += (_, _) => { layout.Stop(); Fit(); };
         Input.TextChanged += (_, _) => { copyInput.IsEnabled = Input.Text.Length > 0; count.Text = Input.Text.Length == 0 ? "" : Input.Text.Length.ToString("N0") + " / 8,000"; inputHint.Visibility = Input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; QueueFit(); Schedule(); };
@@ -78,7 +79,7 @@ internal sealed class ManualWindow : Window
         providers.SelectionChanged += (_, _) => ChangedPreference(); sources.SelectionChanged += (_, _) => ChangedPreference(); targets.SelectionChanged += (_, _) => ChangedPreference();
         PreviewKeyDown += async (_, e) =>
         {
-            if (e.Key == Key.Escape) { composing = false; CancelTranslation(); e.Handled = true; }
+            if (e.Key == Key.Escape) { if (composing) return; Close(); e.Handled = true; }
             else if (e.Key == Key.Enter && Keyboard.Modifiers == ModifierKeys.Control && !composing) { e.Handled = true; await TranslateNowAsync(); }
         };
         Closed += (_, _) => { closed = true; Invalidate(); layout.Stop(); CloseMenus(); Input.Clear(); Output.Clear(); lastSignature = ""; Content = null; if (ownsTranslator) this.translator.Dispose(); };
@@ -139,7 +140,7 @@ internal sealed class ManualWindow : Window
         if (closed || initializing) return;
         Invalidate(); outputHint.Text = "译文会显示在这里"; Ui.Bind(outputHint, TextBlock.ForegroundProperty, "Muted");
         if (paused) { SetStatus("已暂停 · 恢复后继续", "Warning"); return; }
-        if (string.IsNullOrWhiteSpace(Input.Text)) { Output.Clear(); lastSignature = ""; SetStatus("停顿后自动翻译"); return; }
+        if (string.IsNullOrWhiteSpace(Input.Text)) { Output.Clear(); lastSignature = ""; SetStatus("停顿后自动翻译 · Esc 关闭"); return; }
         SetStatus(composing ? "输入法组词中…" : Input.Text.Length >= 8000 ? "已达 8,000 字上限" : "等待输入停顿…");
         if (!composing) { debounce.Interval = TimeSpan.FromMilliseconds(Math.Clamp(options().AutoTranslateDelay, 300, 2000)); debounce.Start(); }
     }
@@ -199,7 +200,8 @@ internal sealed class ManualWindow : Window
         if (Content is DependencyObject root) Close(root);
     }
     internal void SetInput(string text, string source = "auto") { initializing = true; sources.SelectedIndex = Math.Max(0, Array.IndexOf(ApiSupport.Languages, source)); initializing = false; UpdateSwap(); Input.Text = text; Input.CaretIndex = Input.Text.Length; Input.Focus(); }
-    internal void RefreshOptions() { Ui.RefreshTheme(this, Ui.IsDark); initializing = true; LoadChoices(); initializing = false; UpdateSwap(); Topmost = options().ManualTopmost; lastSignature = ""; Schedule(); }
+    private void UpdateCloseHint() => close.ToolTip = "关闭输入栏 · Esc / " + options().ManualHotkey + " · 清空原文与译文";
+    internal void RefreshOptions() { Ui.RefreshTheme(this, Ui.IsDark); UpdateCloseHint(); initializing = true; LoadChoices(); initializing = false; UpdateSwap(); Topmost = options().ManualTopmost; lastSignature = ""; Schedule(); }
     internal void CancelTranslation() { Invalidate(); lastSignature = ""; outputHint.Text = "已取消，可继续输入或点击翻译"; SetStatus("已取消 · 窗口保留"); QueueFit(); }
     internal void SetPaused(bool value)
     {

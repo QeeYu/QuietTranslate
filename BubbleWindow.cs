@@ -146,7 +146,7 @@ internal sealed class BubbleWindow : Window
     public void SetText(string value, string label, bool completed = false)
     {
         if (closed) return;
-        pending = value; dirty = true; finalSize = completed; ToolTip = label;
+        pending = value; dirty = true; finalSize = completed;
     }
     private void FlushRender()
     {
