@@ -1,4 +1,4 @@
-﻿# 轻译 QuietTranslate 1.5.2 · Windows 轻量版
+﻿# 轻译 QuietTranslate 1.5.3 · Windows 轻量版
 
 <img src="Assets/QuietTranslate.svg" width="72" alt="轻译轻翼图标" align="right" />
 
@@ -14,7 +14,7 @@
 
 先在托盘菜单选择“退出轻译”，再将新版解压到新文件夹并运行。已有后台进程时，双击新程序会先唤回旧进程，所以更新前必须退出旧版。无需删除 settings.json 或重新填写已保存的密钥。
 
-1.5.2 更新为“轻翼”图标：正常时羽翼舒展，暂停时收翼闭眼休息。沿用 1.5.1 对提示框 TextWrapping 错误、主动翻译栏空引用及关闭重入的修复。
+1.5.3 增加应用内主题切换，优化深色配色与原生标题栏；重做托盘右键菜单，修复悬停时长文尺寸冻结，合并流式界面刷新，并改善滚轮滑动。保留轻翼图标和此前窗口／提示框修复。
 
 ## 开始使用
 
@@ -28,6 +28,16 @@
 设置不需要“转入后台”才能使用；托盘用于重新打开设置、输入翻译栏、识别图片和退出程序。程序没有自动开机启动或自动安装组件。
 
 正常图标把羽翼与翻译气泡融合，采用鸢尾紫和薄荷色折面；暂停时同一片羽翼收拢、闭眼休息，不叠加暂停角标。托盘文字及菜单继续明确显示状态。图标变化是静态状态切换，不增加动画或后台任务。
+
+## 明暗主题与托盘
+
+设置窗口左上角、轻译名称下方可选“系统 / 浅色 / 深色”。点击先预览；点击“保存并应用”后保存偏好，并更新已打开的输入翻译栏、气泡与托盘菜单，无需重启。旧配置默认跟随系统。气泡自选背景色优先于主题，想跟随明暗切换时将背景颜色留空或选择“跟随主题”。
+
+深色使用石墨底色、淡紫强调色和柔和边框。Windows 11 标题栏同步颜色；较旧 Windows 使用可用的原生深色标题栏接口回退，未逐版本验证。托盘主标志保留轻翼，右键菜单采用统一配色、小图标与快捷键提示；暂停状态仍用文字明确说明。
+
+长文气泡在鼠标悬停时也会继续展开；菜单打开或拖动期间暂缓调整，完成后恢复。文字追加不会主动跳到末尾或顶端。气泡及输入／输出框支持短距离平滑滚轮，遵循系统每次滚动行数设置。气泡在不抢原应用焦点的情况下接收鼠标所在区域的滚轮。
+
+AI 流式内容在后台读取，界面约每 40 毫秒合并显示一次最新内容，避免每个词元都触发布局。最终结果立即应用，取消后过期更新不会覆盖当前内容。服务商自身缓冲、思考或网络停顿仍可能造成等待；普通翻译接口一次返回完整译文时，不会伪造逐字生成。
 
 ## 默认快捷键
 
@@ -181,6 +191,8 @@ dotnet publish -c Release -r win-x64 --self-contained false -o dist\Light -p:Deb
 .\dist\Light\QuietTranslate.exe --hover-test .\work\hover-checks
 .\dist\Light\QuietTranslate.exe --lifecycle-test .\work\lifecycle-checks
 .\dist\Light\QuietTranslate.exe --refinement-test .\work\refinement-checks
+.\dist\Light\QuietTranslate.exe --upgrade-test .\work\upgrade-checks
+.\dist\Light\QuietTranslate.exe --growth-repro .\work\growth-checks
 .\dist\Light\QuietTranslate.exe --bubble-test .\work\bubble-checks
 .\dist\Light\QuietTranslate.exe --ui-smoke .\work\ui-checks
 ```

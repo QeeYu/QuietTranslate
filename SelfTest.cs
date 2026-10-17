@@ -353,7 +353,9 @@ internal static class SelfTest
                 var selection = new SelectionReader.Selection(snapshot!, anchor, false);
                 resultBubble = new BubbleWindow(selection.Bounds ?? anchor, source, .6, textColor: "#87D8D8", dark: true);
                 resultBubble.Show();
-                var translated = await service.TranslateAsync(Provider.OpenAI, new(), "dummy", selection.Text, value => resultBubble.SetText(value, "合成接口测试"), CancellationToken.None);
+                using var updates = new StreamedText(resultBubble.Dispatcher, value => resultBubble.SetText(value, "合成接口测试"));
+                var translated = await service.TranslateAsync(Provider.OpenAI, new(), "dummy", selection.Text, updates.Report, CancellationToken.None);
+                updates.Dispose(); resultBubble.SetText(translated, "合成接口测试", completed: true);
                 completed.TrySetResult(translated);
             }
             catch (Exception ex) { completed.TrySetException(ex); }

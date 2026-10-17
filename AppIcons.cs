@@ -21,6 +21,6 @@ internal static class AppIcons
     private static Icon Load(string name)
     {
         using var stream = Application.GetResourceStream(new Uri("pack://application:,,,/Assets/" + name)).Stream;
-        using var icon = new Icon(stream); return (Icon)icon.Clone();
+        using var icon = new Icon(stream); return new Icon(icon, System.Windows.Forms.SystemInformation.SmallIconSize);
     }
 }

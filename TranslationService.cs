@@ -112,7 +112,7 @@ public sealed class TranslationService : IDisposable
         }
         try
         {
-            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
+            using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
             if (!response.IsSuccessStatusCode)
             {
                 // Do not echo remote bodies: they can contain source text, key material, or gateway internals.
@@ -131,13 +131,13 @@ public sealed class TranslationService : IDisposable
             string result;
             if (Settings.IsAI(provider) && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
             {
-                using var stream = await response.Content.ReadAsStreamAsync(ct);
+                using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
-                result = await ReadStreamAsync(reader, update, ct);
+                result = await ReadStreamAsync(reader, update, ct).ConfigureAwait(false);
             }
             else
             {
-                using var doc = await ApiSupport.ReadJson(response.Content, ct);
+                using var doc = await ApiSupport.ReadJson(response.Content, ct).ConfigureAwait(false);
                 var root = doc.RootElement;
                 if (Settings.IsAI(provider) && root.GetProperty("choices")[0].TryGetProperty("finish_reason", out var finish) &&
                     finish.ValueKind == JsonValueKind.String && finish.GetString() != "stop")
@@ -208,7 +208,7 @@ public sealed class TranslationService : IDisposable
         }
         while (!finished)
         {
-            string? line = await reader.ReadLineAsync(ct);
+            string? line = await reader.ReadLineAsync(ct).ConfigureAwait(false);
             if (line == null) { Consume(); break; }
             if (line.Length == 0) Consume();
             else if (line.StartsWith("data:", StringComparison.Ordinal))

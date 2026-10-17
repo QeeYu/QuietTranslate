@@ -23,7 +23,7 @@ internal sealed class BubbleWindow : Window
     private bool dirty, closed;
     public event Action? Dismissed;
     public string Translation => pending;
-    internal void ApplyAppearance(Settings s) { view.ApplyAppearance(s); ResizeToText(true); }
+    internal void ApplyAppearance(Settings s) { view.SetTheme(Ui.IsDark); view.ApplyAppearance(s); ResizeToText(true); }
     internal void SetContext(string label, Action action) => view.SetContext(label, action);
     internal BubbleView View => view;
     internal string DismissReason { get; private set; } = "closed";
@@ -116,6 +116,12 @@ internal sealed class BubbleWindow : Window
     }
     private IntPtr OnMouse(int code, IntPtr message, IntPtr data)
     {
+        if (code >= 0 && message.ToInt32() == 0x20A && !view.IsMenuOpen && view.Viewport.ScrollableHeight > 0)
+        {
+            var point = Marshal.PtrToStructure<Native.Point>(data);
+            var local = view.Viewport.PointFromScreen(new Point(point.X, point.Y));
+            if (new Rect(view.Viewport.RenderSize).Contains(local) && SmoothScroll.Wheel(view.Viewport, (short)(Marshal.ReadInt32(data, 8) >> 16))) return new IntPtr(1);
+        }
         if (code >= 0 && dragging)
         {
             if (message.ToInt32() == 0x200) MoveDrag(Marshal.PtrToStructure<Native.Point>(data));
@@ -145,16 +151,16 @@ internal sealed class BubbleWindow : Window
     private void FlushRender()
     {
         if (!dirty) return;
-        if (view.IsMouseOver || view.IsMenuOpen) view.SetHeightLimit(Math.Max(65, ActualHeight));
         dirty = false; view.Text = pending; resizePending = true;
     }
     private void ResizeToText(bool force = false)
     {
-        if (closed || dragging || (!force && (view.IsMouseOver || view.IsMenuOpen))) return;
+        if (closed || dragging || (!force && view.IsMenuOpen)) return;
         var work = Native.WorkArea(positionedByUser ? pinnedPosition : pointer); var dpi = VisualTreeHelper.GetDpi(this);
         double maxWidth = Math.Min(380, Math.Max(60, (work.Right - work.Left - 16) / dpi.DpiScaleX));
         MaxHeight = Math.Min(400, Math.Max(65, (work.Bottom - work.Top - 16) / dpi.DpiScaleY)); view.SetHeightLimit(MaxHeight);
         double desired = view.FittingWidth(maxWidth);
+        if (!force && view.IsMouseOver) desired = Math.Max(Width, desired);
         if (!force && !finalSize) desired = Math.Min(maxWidth, Math.Max(Width, Math.Ceiling(desired / 16) * 16));
         if (Math.Abs(Width - desired) > .5) Width = desired;
         resizePending = false; lastResize = Environment.TickCount64;

@@ -107,10 +107,11 @@ internal sealed class ManualWindow : Window
         var frame = new Border { CornerRadius = new CornerRadius(10), Child = box, BorderThickness = new Thickness(1), Margin = new Thickness(0, 0, 0, 7) };
         Ui.Bind(frame, Border.BackgroundProperty, result ? "AccentSoft" : "Input"); Ui.Bind(frame, Border.BorderBrushProperty, "Line"); box.Margin = new Thickness(0);
         field.GotKeyboardFocus += (_, _) => Ui.Bind(frame, Border.BorderBrushProperty, "Accent"); field.LostKeyboardFocus += (_, _) => Ui.Bind(frame, Border.BorderBrushProperty, "Line"); root.Children.Add(frame);
-        var edit = new ContextMenu();
+        var edit = new ContextMenu(); Ui.Apply(edit, Resources["UiThemeDark"] is true);
         foreach (var entry in new[] { ("剪切", ApplicationCommands.Cut), ("复制", ApplicationCommands.Copy), ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll) })
             if (!field.IsReadOnly || entry.Item2 == ApplicationCommands.Copy || entry.Item2 == ApplicationCommands.SelectAll) edit.Items.Add(new MenuItem { Header = entry.Item1, Command = entry.Item2, CommandTarget = field });
         field.ContextMenu = edit;
+        SmoothScroll.Attach(field);
     }
     private void LoadChoices()
     {
@@ -162,7 +163,11 @@ internal sealed class ManualWindow : Window
         {
             string result;
             if (source == target) result = text;
-            else result = await translator.TranslateAsync(provider, config, secretReader(provider, config), text, part => { if (!closed && !ct.IsCancellationRequested && version == revision) Output.Text = part; }, ct, target, source);
+            else
+            {
+                using var updates = new StreamedText(Dispatcher, part => { if (!closed && !ct.IsCancellationRequested && version == revision) Output.Text = part; });
+                result = await translator.TranslateAsync(provider, config, secretReader(provider, config), text, updates.Report, ct, target, source);
+            }
             if (!closed && !ct.IsCancellationRequested && version == revision)
             {
                 Output.Text = result; Output.Opacity = 1; copy.IsEnabled = true; lastSignature = signature; SetStatus(source == target ? "语言相同 · 已保留原文" : "已完成 · " + Settings.Name(provider), "Accent");
@@ -194,7 +199,7 @@ internal sealed class ManualWindow : Window
         if (Content is DependencyObject root) Close(root);
     }
     internal void SetInput(string text, string source = "auto") { initializing = true; sources.SelectedIndex = Math.Max(0, Array.IndexOf(ApiSupport.Languages, source)); initializing = false; UpdateSwap(); Input.Text = text; Input.CaretIndex = Input.Text.Length; Input.Focus(); }
-    internal void RefreshOptions() { initializing = true; LoadChoices(); initializing = false; UpdateSwap(); Topmost = options().ManualTopmost; lastSignature = ""; Schedule(); }
+    internal void RefreshOptions() { Ui.RefreshTheme(this, Ui.IsDark); initializing = true; LoadChoices(); initializing = false; UpdateSwap(); Topmost = options().ManualTopmost; lastSignature = ""; Schedule(); }
     internal void CancelTranslation() { Invalidate(); lastSignature = ""; outputHint.Text = "已取消，可继续输入或点击翻译"; SetStatus("已取消 · 窗口保留"); QueueFit(); }
     internal void SetPaused(bool value)
     {

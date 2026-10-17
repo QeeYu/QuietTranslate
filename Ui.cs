@@ -7,7 +7,7 @@ using Microsoft.Win32;
 
 namespace QuietTranslate;
 
-internal static class Ui
+internal static partial class Ui
 {
     private sealed class ToolTipContentSelector : DataTemplateSelector
     {
@@ -17,7 +17,7 @@ internal static class Ui
         public override DataTemplate SelectTemplate(object item, DependencyObject container) => item is string ? wrapped : base.SelectTemplate(item, container);
     }
     private static readonly DataTemplateSelector toolTipContent = new ToolTipContentSelector();
-    internal static bool IsDark
+    internal static bool IsSystemDark
     {
         get { try { return Registry.GetValue(@"HKEY_CURRENT_USER\Software\Microsoft\Windows\CurrentVersion\Themes\Personalize", "AppsUseLightTheme", 1) is int value && value == 0; } catch { return false; } }
     }
@@ -31,11 +31,19 @@ internal static class Ui
     internal static void Apply(FrameworkElement target, bool? dark = null)
     {
         bool night = dark ?? IsDark;
+        bool themed = target.Resources.Contains("UiThemeDark");
+        target.Resources["UiThemeDark"] = night;
         string[] keys = { "Bg", "Surface", "Text", "Muted", "Line", "Input", "Control", "Hover", "Accent", "AccentSoft", "Warning", "OnAccent" };
         string[] values = night
-            ? new[] { "#10171E", "#18232C", "#E5EDF3", "#A0B1BD", "#344550", "#121D25", "#253641", "#30434F", "#8BD1D3", "#203D44", "#EFC37F", "#10272D" }
+            ? new[] { "#14151D", "#1C1E29", "#EAECF5", "#A6ADC2", "#343747", "#171923", "#292C3C", "#34394C", "#B9C4FF", "#292E46", "#F3C38B", "#191D32" }
             : new[] { "#F1F5F7", "#FFFFFF", "#24343E", "#576D7A", "#DCE5EA", "#F5F8FA", "#EDF2F5", "#E5EDF1", "#247A85", "#EAF5F4", "#8D591D", "#FFFFFF" };
         for (int i = 0; i < keys.Length; i++) target.Resources["Ui" + keys[i]] = new SolidColorBrush(Color(values[i]));
+        if (target is Window window)
+        {
+            if (!themed) window.SourceInitialized += (_, _) => ApplyCaption(window);
+            ApplyCaption(window);
+        }
+        if (themed) return;
         target.Resources.MergedDictionaries.Add((ResourceDictionary)XamlReader.Parse("""
             <ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation" xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
               <Style TargetType="ToolTip"><Setter Property="Background" Value="{DynamicResource UiSurface}"/><Setter Property="Foreground" Value="{DynamicResource UiText}"/><Setter Property="BorderBrush" Value="{DynamicResource UiLine}"/><Setter Property="MaxWidth" Value="300"/><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="ToolTip"><Border Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="1" CornerRadius="8" Padding="10,7"><ContentPresenter/></Border></ControlTemplate></Setter.Value></Setter></Style>
@@ -47,7 +55,7 @@ internal static class Ui
               <Style TargetType="MenuItem">
                 <Setter Property="Foreground" Value="{Binding Foreground, RelativeSource={RelativeSource AncestorType=ContextMenu}}"/>
                 <Setter Property="Padding" Value="10,8"/><Setter Property="MinWidth" Value="116"/>
-                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem"><Border x:Name="body" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}"><DockPanel><TextBlock x:Name="check" Text="✓" Visibility="Hidden" Width="18" FontSize="11"/><ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/></DockPanel></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="body" Property="Background" Value="{DynamicResource UiHover}"/></Trigger><Trigger Property="IsChecked" Value="True"><Setter TargetName="check" Property="Visibility" Value="Visible"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="MenuItem"><Border x:Name="body" Background="Transparent" CornerRadius="6" Padding="{TemplateBinding Padding}"><DockPanel><Grid Width="23"><ContentPresenter x:Name="icon" ContentSource="Icon" VerticalAlignment="Center"/><TextBlock x:Name="check" Text="✓" Visibility="Hidden" FontSize="11"/></Grid><TextBlock DockPanel.Dock="Right" Text="{TemplateBinding InputGestureText}" Foreground="{DynamicResource UiMuted}" FontSize="11" Margin="24,0,0,0" VerticalAlignment="Center"/><ContentPresenter ContentSource="Header" RecognizesAccessKey="True"/></DockPanel></Border><ControlTemplate.Triggers><Trigger Property="IsHighlighted" Value="True"><Setter TargetName="body" Property="Background" Value="{DynamicResource UiHover}"/></Trigger><Trigger Property="IsChecked" Value="True"><Setter TargetName="check" Property="Visibility" Value="Visible"/><Setter TargetName="icon" Property="Visibility" Value="Hidden"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
               </Style>
               <Style TargetType="Separator"><Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Separator"><Border Height="1" Margin="8,4" Background="{DynamicResource UiLine}"/></ControlTemplate></Setter.Value></Setter></Style>
               <Style TargetType="TextBlock"><Setter Property="Foreground" Value="{DynamicResource UiText}"/></Style>
@@ -110,7 +118,12 @@ internal static class Ui
                   </Grid>
                 </ControlTemplate></Setter.Value></Setter>
               </Style>
-              <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{DynamicResource UiText}"/><Setter Property="Margin" Value="0,5,0,10"/></Style>
+              <Style TargetType="CheckBox"><Setter Property="Foreground" Value="{DynamicResource UiText}"/><Setter Property="Margin" Value="0,5,0,10"/><Setter Property="Cursor" Value="Hand"/>
+                <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox"><Grid><Grid.ColumnDefinitions><ColumnDefinition Width="18"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+                  <Border x:Name="box" Width="17" Height="17" CornerRadius="4" VerticalAlignment="Top" Background="{DynamicResource UiInput}" BorderBrush="{DynamicResource UiLine}" BorderThickness="1"><TextBlock x:Name="mark" Text="✓" Visibility="Hidden" FontSize="12" Foreground="{DynamicResource UiOnAccent}" HorizontalAlignment="Center" VerticalAlignment="Center"/></Border>
+                  <ContentPresenter Grid.Column="1" Margin="8,0,0,0" RecognizesAccessKey="True"/>
+                </Grid><ControlTemplate.Triggers><Trigger Property="IsChecked" Value="True"><Setter TargetName="mark" Property="Visibility" Value="Visible"/><Setter TargetName="box" Property="Background" Value="{DynamicResource UiAccent}"/><Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource UiAccent}"/></Trigger><Trigger Property="IsKeyboardFocused" Value="True"><Setter TargetName="box" Property="BorderBrush" Value="{DynamicResource UiAccent}"/></Trigger><Trigger Property="IsEnabled" Value="False"><Setter Property="Opacity" Value="0.45"/></Trigger></ControlTemplate.Triggers></ControlTemplate></Setter.Value></Setter>
+              </Style>
               <Style TargetType="Expander"><Setter Property="Foreground" Value="{DynamicResource UiMuted}"/></Style>
               <Style TargetType="Slider">
                 <Setter Property="Height" Value="24"/>
@@ -129,6 +142,7 @@ internal static class Ui
             """));
         var toolTip = new Style(typeof(ToolTip), (Style)target.Resources[typeof(ToolTip)]);
         toolTip.Setters.Add(new Setter(ContentControl.ContentTemplateSelectorProperty, toolTipContent)); target.Resources[typeof(ToolTip)] = toolTip;
+        target.Resources[MenuItem.SeparatorStyleKey] = target.Resources[typeof(Separator)];
     }
     internal static void Bind(DependencyObject target, DependencyProperty property, string key)
     { if (target is FrameworkElement element) element.SetResourceReference(property, "Ui" + key); }

@@ -11,6 +11,7 @@ namespace QuietTranslate;
 public enum Provider { OpenAI, Microsoft, DeepL, Google, Baidu, Tencent, Youdao, LibreTranslate, Qwen, Doubao, GLM, Kimi, SiliconFlow, CustomAI, CustomTranslation }
 public enum OcrProvider { Windows, OCRSpace, Tencent, Baidu, GoogleVision, VisionAI, Custom, Local }
 public enum AppMode { Normal, HotkeysOnly, Paused, Compatibility }
+public enum ThemeMode { System, Light, Dark }
 public sealed class AppRule { public string ProcessName { get; set; } = ""; public AppMode Mode { get; set; } public string SourceLanguage { get; set; } = "auto"; }
 public sealed class ServiceProfile { public Provider Provider { get; set; } public ServiceSettings Settings { get; set; } = new(); }
 
@@ -36,6 +37,7 @@ public sealed class ServiceSettings
 
 public sealed class Settings
 {
+    public ThemeMode Theme { get; set; } = ThemeMode.System;
     public Provider Provider { get; set; }
     public Dictionary<Provider, ServiceSettings> Services { get; set; } = Defaults();
     public OcrProvider OcrProvider { get; set; } = OcrProvider.OCRSpace;
@@ -92,6 +94,7 @@ public sealed class Settings
             value.OcrServices ??= OcrDefaults();
             foreach (var pair in OcrDefaults()) value.OcrServices.TryAdd(pair.Key, pair.Value);
             if (!Enum.IsDefined(value.OcrProvider)) value.OcrProvider = OcrProvider.OCRSpace;
+            if (!Enum.IsDefined(value.Theme)) value.Theme = ThemeMode.System;
             value.AppRules ??= new();
             value.SavedServices ??= new();
             value.CopyWaitMs = Math.Clamp(value.CopyWaitMs, 300, 2500);

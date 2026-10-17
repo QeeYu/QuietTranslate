@@ -17,7 +17,7 @@ public sealed partial class App : Application
     private readonly OcrService ocr = new();
     private readonly DispatcherTimer policyTimer = new() { Interval = TimeSpan.FromMilliseconds(300) };
     private Forms.NotifyIcon? tray;
-    private Forms.ToolStripMenuItem? pauseItem;
+    private TrayMenu? trayMenu;
     private Hotkeys? hotkeys;
     private SelectionTrigger? selectionTrigger;
     private BubbleWindow? bubble;
@@ -45,6 +45,8 @@ public sealed partial class App : Application
             if (args.Length > 0 && args[0] == "--ui-smoke") { int code = await SelfTest.UiSmokeAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--v13-test") { int code = await V13Test.RunAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--bubble-test") { int code = await BubbleTest.RunAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--growth-repro") { int code = await GrowthRepro.RunAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--upgrade-test") { int code = await UpgradeTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--refinement-test") { int code = await RefinementTest.RunAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--hover-test") { int code = await HoverTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--lifecycle-test") { int code = await app.RunLifecycleAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
@@ -66,15 +68,12 @@ public sealed partial class App : Application
         showWindow = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
         showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(showWindow, (_, _) => { if (!exiting) Dispatcher.BeginInvoke(new Action(OpenSettings)); }, null, Timeout.Infinite, false);
         try { settings = initial ?? Settings.Load(); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); Shutdown(); return; }
+        Ui.Theme = settings.Theme;
         hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) OpenManual(); else _ = ExecuteAsync(id == 2); };
         selectionTrigger = new SelectionTrigger((source, anchor, text) => _ = ExecuteAsync(false, source, anchor, text), () => settings, () => mode == AppMode.Compatibility);
-        var menu = new Forms.ContextMenuStrip();
-        menu.Items.Add("输入翻译栏", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => OpenManual())));
-        menu.Items.Add("截图翻译", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => _ = ExecuteAsync(true))));
-        menu.Items.Add("识别图片文件…", null, (_, _) => Dispatcher.BeginInvoke(new Action(OpenImage)));
-        pauseItem = new Forms.ToolStripMenuItem("暂停翻译", null, (_, _) => Dispatcher.BeginInvoke(new Action(TogglePause))); menu.Items.Add(pauseItem);
-        menu.Items.Add("设置…", null, (_, _) => Dispatcher.BeginInvoke(new Action(OpenSettings))); menu.Items.Add(new Forms.ToolStripSeparator()); menu.Items.Add("退出轻译", null, (_, _) => Dispatcher.BeginInvoke(new Action(() => Shutdown())));
-        tray = new Forms.NotifyIcon { Icon = AppIcons.Active, Text = "轻译 · 已启用", Visible = true, ContextMenuStrip = menu }; tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(OpenSettings));
+        trayMenu = new TrayMenu(() => OpenManual(), () => _ = ExecuteAsync(true), OpenImage, TogglePause, OpenSettings, () => Shutdown());
+        tray = new Forms.NotifyIcon { Icon = AppIcons.Active, Text = "轻译 · 已启用", Visible = true }; tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(OpenSettings));
+        tray.MouseUp += (_, e) => { if (e.Button == Forms.MouseButtons.Right) Dispatcher.BeginInvoke(new Action(() => trayMenu.Show())); };
         policyTimer.Tick += (_, _) => RefreshState(); policyTimer.Start();
         try { RefreshState(true); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); OpenSettings(); }
         OpenSettings();
@@ -98,7 +97,7 @@ public sealed partial class App : Application
         if (manual != null) manual.Icon = blocked ? AppIcons.PausedImage : AppIcons.Image;
         manual?.SetPaused(blocked && (settings.PauseManual || mode == AppMode.Paused));
         if (tray != null) { tray.Text = paused ? "轻译 · 已手动暂停" : mode == AppMode.Paused ? "轻译 · 当前应用自动暂停" : "轻译 · 已启用"; tray.Icon = blocked ? AppIcons.Paused : AppIcons.Active; }
-        if (pauseItem != null) pauseItem.Text = paused ? "恢复翻译（" + settings.PauseHotkey + "）" : "暂停翻译（" + settings.PauseHotkey + "）";
+        trayMenu?.Refresh(settings, paused, blocked);
     }
     private void TogglePause() { paused = !paused; RefreshState(true); }
     private void OpenImage()
@@ -115,8 +114,8 @@ public sealed partial class App : Application
         settingsWindow = new SettingsWindow(settings, value =>
         {
             var old = settings;
-            try { hotkeys!.Apply(value, false); value.Save(); settings = value; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); }
-            catch { settings = old; RefreshState(true); throw; }
+            try { hotkeys!.Apply(value, false); value.Save(); settings = value; Ui.Theme = settings.Theme; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); }
+            catch { settings = old; Ui.Theme = old.Theme; RefreshState(true); throw; }
         });
         settingsWindow.RecordingChanged += value => { recording = value; if (value) { hotkeys?.Suspend(); if (selectionTrigger != null) selectionTrigger.Enabled = false; } else if (!exiting) RefreshState(true); };
         settingsWindow.Closed += (_, _) => { settingsWindow = null; recording = false; if (!exiting) RefreshState(true); }; settingsWindow.Show();
@@ -175,7 +174,9 @@ public sealed partial class App : Application
             string editable = source; view.SetContext(screenshot ? "校正识别文字…" : "在翻译栏编辑原文…", () => OpenManual(editable, from));
             view.SetText("正在翻译…", ApiSupport.LanguageName(from) + " → 简体中文");
             var provider = settings.Provider; var service = settings.Current; secret = Credentials.Get(Credentials.Target(provider, service)); long? first = null;
-            string result = await translator.TranslateAsync(provider, service, secret, source, part => { if (ct.IsCancellationRequested) return; first ??= watch.ElapsedMilliseconds; view.SetText(part, $"简体中文 · 首字 {first} ms"); }, ct, "zh-Hans", from);
+            using var updates = new StreamedText(Dispatcher, part => { if (ct.IsCancellationRequested) return; first ??= watch.ElapsedMilliseconds; view.SetText(part, $"简体中文 · 首字 {first} ms"); });
+            string result = await translator.TranslateAsync(provider, service, secret, source, updates.Report, ct, "zh-Hans", from);
+            updates.Dispose();
             if (!ct.IsCancellationRequested) view.SetText(result, $"简体中文 · {watch.ElapsedMilliseconds} ms" + (TranslationService.IsWord(source) ? " · 短词有歧义时可编辑原文" : " · Esc 关闭"), completed: true);
         }
         catch (OperationCanceledException) { }
@@ -198,6 +199,6 @@ public sealed partial class App : Application
     {
         showWindowRegistration?.Unregister(null); showWindow?.Dispose();
         exiting = true; policyTimer.Stop(); selectionTrigger?.Dispose(); operation?.Cancel(); bubble?.Close(); manual?.Close(); settingsWindow?.Close(); hotkeys?.Dispose(); translator.Dispose(); ocr.Dispose();
-        if (tray != null) { tray.Visible = false; tray.ContextMenuStrip?.Dispose(); tray.Dispose(); } instance?.Dispose();
+        trayMenu?.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } instance?.Dispose();
     }
 }

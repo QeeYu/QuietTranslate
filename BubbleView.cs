@@ -16,7 +16,9 @@ internal sealed class BubbleView : Border
     private readonly Button copyButton = ActionButton("\uE8C8", "复制译文"), moreButton = ActionButton("\uE712", "更多操作"), closeButton = ActionButton("\uE8BB", "关闭（Esc）");
     private readonly ContextMenu menu = new() { FontSize = 13, Placement = PlacementMode.Top, StaysOpen = false };
     private readonly MenuItem contextItem = new() { Header = "在翻译栏编辑原文…", Visibility = Visibility.Collapsed };
-    private readonly bool dark;
+    private bool dark;
+    internal ScrollViewer Viewport => scroll;
+    internal void SetTheme(bool value) { dark = value; Ui.Apply(this, dark); }
     private readonly Border toolbar = new() { BorderThickness = new Thickness(0, 0, 0, 1), Margin = new Thickness(-5, 0, -6, 5), Padding = new Thickness(0, 0, 0, 2) };
     internal Border DragHandle { get; } = new() { Background = Brushes.Transparent, Cursor = Cursors.SizeAll, ToolTip = "拖动气泡 · 本次保持位置" };
     private Action? contextAction;
@@ -33,6 +35,7 @@ internal sealed class BubbleView : Border
         System.Windows.Documents.TextElement.SetFontFamily(this, new FontFamily("Segoe UI, Microsoft YaHei UI"));
         var stack = new StackPanel();
         scroll = new ScrollViewer { Content = text, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
+        SmoothScroll.Attach(scroll);
         var header = new DockPanel { Height = 22, LastChildFill = true };
         var footer = new StackPanel { Orientation = Orientation.Horizontal };
         copyButton.Width = moreButton.Width = closeButton.Width = 22;
@@ -71,7 +74,7 @@ internal sealed class BubbleView : Border
     internal void ApplyAppearance(Settings s)
     {
         ApplyAppearance(s.BubbleOpacity, s.BubbleFontSize, s.BubbleTextColor);
-        Color surface = s.BubbleBackgroundColor.Length > 0 ? Ui.Color(Settings.NormalizeTextColor(s.BubbleBackgroundColor)) : Ui.Color(dark ? "#202630" : "#FAFBFD");
+        Color surface = s.BubbleBackgroundColor.Length > 0 ? Ui.Color(Settings.NormalizeTextColor(s.BubbleBackgroundColor)) : Ui.Color(dark ? "#20222F" : "#FAFBFD");
         Color requested = s.BubbleTextColor.Length > 0 ? Ui.Color(Settings.NormalizeTextColor(s.BubbleTextColor)) : Ui.Color(dark ? "#ECF2F7" : "#25313D");
         Color foreground = s.BubbleSmartColors ? ReadableText(requested, surface) : requested;
         // Automatic text follows the actual chosen background even if the Windows theme is different.

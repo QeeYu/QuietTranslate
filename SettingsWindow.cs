@@ -29,7 +29,8 @@ internal sealed class SettingsWindow : Window
     private readonly Border buttonPreview = new();
     private readonly TextBlock appearanceHint = Ui.Hint("");
     private readonly ServiceEditor service, ocr;
-    private readonly bool night;
+    private bool night;
+    private readonly List<Button> themeButtons = new();
     private IntPtr keyboardHook;
     private Native.HookProc? keyboardProc;
     private bool recordingActive;
@@ -37,13 +38,21 @@ internal sealed class SettingsWindow : Window
 
     public SettingsWindow(Settings settings, Action<Settings> save, bool? dark = null)
     {
-        draft = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!; this.save = save; night = dark ?? Ui.IsDark;
+        draft = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!; this.save = save; night = dark ?? Ui.ResolveTheme(draft.Theme);
         foreach (var text in new[] { settings.SelectionHotkey, settings.ScreenshotHotkey, settings.PauseHotkey, settings.ManualHotkey }) try { originalHotkeys.Add(Hotkey.Parse(text)); } catch { }
         Icon = AppIcons.Image; Title = "轻译 · 设置"; Width = 910; Height = Math.Min(800, SystemParameters.WorkArea.Height - 40); MinWidth = 760; MinHeight = 560; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI"); FontSize = 13; Ui.Apply(this, night); Ui.Bind(this, BackgroundProperty, "Bg"); Ui.Bind(this, ForegroundProperty, "Text");
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) }); root.ColumnDefinitions.Add(new ColumnDefinition()); Content = root;
         var sidebar = new DockPanel { Margin = new Thickness(16, 26, 16, 20) }; var sideBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) }; Ui.Bind(sideBorder, Border.BackgroundProperty, "Surface"); Ui.Bind(sideBorder, Border.BorderBrushProperty, "Line"); root.Children.Add(sideBorder);
         var brand = new StackPanel { Margin = new Thickness(8, 0, 0, 28) }; brand.Children.Add(new TextBlock { Text = "轻译", FontSize = 29, FontWeight = FontWeights.SemiBold }); brand.Children.Add(Ui.Hint("随手选词，轻松表达")); DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);
+        var themeRow = new StackPanel { Orientation = Orientation.Horizontal, Margin = new Thickness(-4, 16, 0, 4) }; brand.Children.Add(themeRow);
+        foreach (var pair in new[] { (ThemeMode.System, "系统"), (ThemeMode.Light, "浅色"), (ThemeMode.Dark, "深色") })
+        {
+            var mode = pair.Item1; var button = new Button { Content = pair.Item2, Name = "Theme" + mode, FontSize = 11, Padding = new Thickness(8, 6, 8, 6), BorderThickness = new Thickness(0), Margin = new Thickness(0, 0, 2, 0), ToolTip = "界面主题 · 预览后保存并应用" };
+            themeButtons.Add(button); themeRow.Children.Add(button);
+            button.Click += (_, _) => { draft.Theme = mode; night = Ui.ResolveTheme(mode); Ui.RefreshTheme(this, night); preview?.SetTheme(night); UpdatePreview(); UpdateThemeButtons(); notice.Text = "正在预览主题，点击保存并应用后全局生效。"; };
+        }
+        UpdateThemeButtons();
         var privacy = Ui.Hint("轻量版 · 无历史记录\n关闭即清空翻译内容"); DockPanel.SetDock(privacy, Dock.Bottom); sidebar.Children.Add(privacy);
         string[] names = { "划词与快捷键", "气泡与按钮", "翻译服务", "截图 OCR", "应用规则", "输入翻译栏" };
         var navigation = new StackPanel(); sidebar.Children.Add(navigation);
@@ -51,6 +60,7 @@ internal sealed class SettingsWindow : Window
         var right = new DockPanel(); Grid.SetColumn(right, 1); root.Children.Add(right);
         var heading = new StackPanel { Margin = new Thickness(26, 24, 26, 18) }; title.FontSize = 24; title.FontWeight = FontWeights.SemiBold; heading.Children.Add(title); heading.Children.Add(subtitle); DockPanel.SetDock(heading, Dock.Top); right.Children.Add(heading);
         var footer = new StackPanel { Margin = new Thickness(26, 12, 26, 20) }; footer.Children.Add(notice); var apply = new Button { Content = "保存并应用", Name = "SaveSettings", MinWidth = 150, HorizontalAlignment = HorizontalAlignment.Right, Background = new SolidColorBrush(Ui.Color("#247A85")), Foreground = Brushes.White, Margin = new Thickness(0, 10, 0, 0) }; footer.Children.Add(apply); DockPanel.SetDock(footer, Dock.Bottom); right.Children.Add(footer);
+        Ui.Bind(apply, Control.BackgroundProperty, "Accent"); Ui.Bind(apply, Control.ForegroundProperty, "OnAccent");
         var content = new StackPanel { Margin = new Thickness(26, 0, 26, 0) }; foreach (var p in pages) content.Children.Add(p); right.Children.Add(new ScrollViewer { Content = content, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled });
 
         var selection = Card(0, "确认文字选区，再出现按钮"); selection.Children.Add(Ui.Hint("拖选、双击或键盘选词后确认有效文字，鼠标附近出现按钮，并避让常见划词菜单。点击才发送翻译；按钮不抢焦点。无法读取选区的应用，可在应用规则中开启兼容模式。"));
@@ -74,7 +84,7 @@ internal sealed class SettingsWindow : Window
         var backgroundHex = Color(bubble, "背景颜色 · 留空跟随明暗主题", draft.BubbleBackgroundColor, v => draft.BubbleBackgroundColor = v, "BubbleBackgroundHex");
         var borderHex = Color(bubble, "边框颜色 · 留空自动协调", draft.BubbleBorderColor, v => draft.BubbleBorderColor = v, "BubbleBorderHex");
         var palettes = new WrapPanel();
-        foreach (var pair in new[] { ("跟随系统", ""), ("纸白", "#FAFBFD"), ("墨黑", "#202630"), ("雾青", "#E8F3F1") })
+        foreach (var pair in new[] { ("跟随主题", ""), ("纸白", "#FAFBFD"), ("墨黑", "#20222F"), ("雾青", "#E8F3F1") })
         { var p = pair; var preset = new Button { Content = p.Item1, Padding = new Thickness(10, 6, 10, 6), Margin = new Thickness(0, 0, 8, 8) }; preset.Click += (_, _) => { foregroundHex.Text = ""; backgroundHex.Text = p.Item2; borderHex.Text = ""; }; palettes.Children.Add(preset); }
         bubble.Children.Add(palettes); bubble.Children.Add(appearanceHint);
         Toggle(bubble, "显示边框", draft.BubbleBorderVisible, v => draft.BubbleBorderVisible = v, look: true);
@@ -130,6 +140,14 @@ internal sealed class SettingsWindow : Window
         list.SelectionChanged += (_, _) => { int i = list.SelectedIndex; if (i >= 0 && i < draft.AppRules.Count) { var r = draft.AppRules[i]; process.Text = r.ProcessName; modes.SelectedIndex = (int)r.Mode; langs.SelectedIndex = Array.IndexOf(ApiSupport.Languages, r.SourceLanguage); } };
         var actions = new WrapPanel(); var add = new Button { Content = "加入 / 更新规则", Margin = new Thickness(0, 0, 8, 0) }; add.Click += (_, _) => { string name = System.IO.Path.GetFileNameWithoutExtension(process.Text.Trim()); if (name.Length == 0) { notice.Text = "请先选择应用。"; return; } draft.AppRules.RemoveAll(r => r.ProcessName.Equals(name, StringComparison.OrdinalIgnoreCase)); draft.AppRules.Add(new() { ProcessName = name, Mode = (AppMode)modes.SelectedIndex, SourceLanguage = ApiSupport.Languages[Math.Max(0, langs.SelectedIndex)] }); Refresh(); notice.Text = "规则已加入草稿，保存并应用后生效。"; }; actions.Children.Add(add);
         var remove = new Button { Content = "删除选中规则" }; remove.Click += (_, _) => { int i = list.SelectedIndex; if (i >= 0 && i < draft.AppRules.Count) draft.AppRules.RemoveAt(i); Refresh(); }; actions.Children.Add(remove); panel.Children.Add(actions); Refresh();
+    }
+    private void UpdateThemeButtons()
+    {
+        for (int i = 0; i < themeButtons.Count; i++)
+        {
+            Ui.Bind(themeButtons[i], Control.BackgroundProperty, (int)draft.Theme == i ? "AccentSoft" : "Surface");
+            Ui.Bind(themeButtons[i], Control.ForegroundProperty, (int)draft.Theme == i ? "Accent" : "Muted");
+        }
     }
     internal void ShowPage(int page)
     {
