@@ -37,7 +37,13 @@ public sealed partial class App : Application
     [STAThread]
     public static int Main(string[] args)
     {
-        var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown };
+        // Windows 10+ pointer input avoids the legacy WISP pen worker which can
+        // hang during dispatcher shutdown while enumerating tablet devices.
+        AppContext.SetSwitch("Switch.System.Windows.Input.Stylus.EnablePointerSupport", true);
+        Mutex? startupInstance = null;
+        string startupScope = args.Length > 1 && args[0] == "--instance-fixture" ? ".InstanceTest." + args[1] : "";
+        if ((args.Length == 0 || startupScope.Length > 0) && !AcquireInstance(startupScope, out startupInstance)) return 0;
+        var app = new App { ShutdownMode = ShutdownMode.OnExplicitShutdown, instance = startupInstance };
         app.DispatcherUnhandledException += (_, e) => { e.Handled = true; if (app.TestException != null) app.TestException(e.Exception); else MessageBox.Show("工具遇到错误：" + e.Exception.Message, "轻译", MessageBoxButton.OK, MessageBoxImage.Warning); };
         app.Startup += async (_, _) =>
         {
@@ -56,20 +62,16 @@ public sealed partial class App : Application
             if (args.Length > 0 && args[0] == "--motion-test") { int code = await MotionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--docs-capture") { int code = await DocsCapture.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--polish-test") { int code = await PolishTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--copy-test") { int code = await CopyTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 2 && args[0] == "--instance-fixture") { app.OpenInstanceFixture(args[1], args[2]); return; }
             app.Start();
         };
         app.Exit += (_, _) => app.Cleanup(); return app.Run();
     }
     private void Start(Settings? initial = null, string testScope = "")
     {
-        instance = new Mutex(true, "Local\\QuietTranslate.CurrentUser." + Environment.UserName + testScope, out bool created);
+        if (instance == null && !AcquireInstance(testScope, out instance)) { Shutdown(); return; }
         string eventName = "Local\\QuietTranslate.ShowWindow." + Environment.UserName + testScope;
-        if (!created)
-        {
-            if (EventWaitHandle.TryOpenExisting(eventName, out var running)) { using (running) running.Set(); }
-            else MessageBox.Show("轻译正在启动，请稍候从托盘打开。", "轻译");
-            Shutdown(); return;
-        }
         showWindow = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
         showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(showWindow, (_, _) => { if (!exiting) Dispatcher.BeginInvoke(new Action(OpenSettings)); }, null, Timeout.Infinite, false);
         try { settings = initial ?? Settings.Load(); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); Shutdown(); return; }
@@ -82,6 +84,18 @@ public sealed partial class App : Application
         policyTimer.Tick += (_, _) => RefreshState(); policyTimer.Start();
         try { RefreshState(true); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); OpenSettings(); }
         OpenSettings();
+    }
+    private static bool AcquireInstance(string scope, out Mutex? guard)
+    {
+        guard = new Mutex(false, "Local\\QuietTranslate.CurrentUser." + Environment.UserName + scope, out bool created);
+        if (created) return true;
+        guard.Dispose(); guard = null;
+        for (int i = 0; i < 12; i++)
+        {
+            if (EventWaitHandle.TryOpenExisting("Local\\QuietTranslate.ShowWindow." + Environment.UserName + scope, out var running)) { using (running) running.Set(); break; }
+            Thread.Sleep(25);
+        }
+        return false;
     }
     internal static AppRule? FindRule(Settings s, string process) => s.AppRules.LastOrDefault(r => r.ProcessName.Equals(Path.GetFileNameWithoutExtension(process), StringComparison.OrdinalIgnoreCase));
     private void RefreshState(bool force = false)

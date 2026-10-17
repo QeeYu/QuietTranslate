@@ -31,7 +31,7 @@ internal sealed class ManualWindow : Window
     private readonly Button close = Ui.IconButton("\uE8BB", "关闭输入栏");
     private readonly DispatcherTimer debounce = new(), layout = new() { Interval = TimeSpan.FromMilliseconds(55) };
     private CancellationTokenSource? active;
-    private bool composing, closed, initializing, paused;
+    private bool composing, closed, initializing, paused, copying;
     private int revision;
     private string lastSignature = "";
     internal ManualWindow(Func<Settings> options, Action<Provider, string, string> preferences, TranslationService? translator = null, Func<Provider, ServiceSettings, string>? secretReader = null, bool? dark = null)
@@ -67,7 +67,7 @@ internal sealed class ManualWindow : Window
         var feedback = new DockPanel { Margin = new Thickness(3, 1, 3, 0), LastChildFill = true, Height = 17 };
         Ui.Bind(count, TextBlock.ForegroundProperty, "Muted"); DockPanel.SetDock(count, Dock.Right); feedback.Children.Add(count); status.Margin = new Thickness(0, 0, 10, 0); feedback.Children.Add(status); root.Children.Add(feedback);
         copy.Name = "CopyOutput"; copyInput.Name = "CopyInput"; copy.IsEnabled = false; copyInput.IsEnabled = false; SetStatus("停顿后自动翻译 · Esc 关闭");
-        copyInput.Click += (_, _) => Copy(Input.Text, "原文"); copy.Click += (_, _) => { if (copy.IsEnabled) Copy(Output.Text, "译文"); };
+        copyInput.Click += async (_, _) => await CopyAsync(Input.Text, "原文"); copy.Click += async (_, _) => { if (copy.IsEnabled) await CopyAsync(Output.Text, "译文"); };
         layout.Tick += (_, _) => { layout.Stop(); Fit(); };
         Input.TextChanged += (_, _) => { copyInput.IsEnabled = Input.Text.Length > 0; count.Text = Input.Text.Length == 0 ? "" : Input.Text.Length.ToString("N0") + " / 8,000"; inputHint.Visibility = Input.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; QueueFit(); Schedule(); };
         Output.TextChanged += (_, _) => { outputHint.Visibility = Output.Text.Length == 0 ? Visibility.Visible : Visibility.Collapsed; QueueFit(); };
@@ -112,6 +112,7 @@ internal sealed class ManualWindow : Window
         foreach (var entry in new[] { ("剪切", ApplicationCommands.Cut), ("复制", ApplicationCommands.Copy), ("粘贴", ApplicationCommands.Paste), ("全选", ApplicationCommands.SelectAll) })
             if (!field.IsReadOnly || entry.Item2 == ApplicationCommands.Copy || entry.Item2 == ApplicationCommands.SelectAll) edit.Items.Add(new MenuItem { Header = entry.Item1, Command = entry.Item2, CommandTarget = field });
         field.ContextMenu = edit;
+        field.CommandBindings.Add(new CommandBinding(ApplicationCommands.Copy, async (_, e) => { e.Handled = true; await CopyAsync(field.SelectedText, result ? "译文" : "原文"); }, (_, e) => { e.CanExecute = field.SelectionLength > 0; e.Handled = true; }));
         SmoothScroll.Attach(field);
     }
     private void LoadChoices()
@@ -145,7 +146,13 @@ internal sealed class ManualWindow : Window
         if (!composing) { debounce.Interval = TimeSpan.FromMilliseconds(Math.Clamp(options().AutoTranslateDelay, 300, 2000)); debounce.Start(); }
     }
     private void SetStatus(string value, string color = "Muted") { status.Text = value; status.ToolTip = value; Ui.Bind(status, TextBlock.ForegroundProperty, color); }
-    private void Copy(string value, string label) { try { if (value.Length > 0) { Clipboard.SetText(value); SetStatus("已复制" + label, "Accent"); } } catch { SetStatus("剪贴板被占用，请重试", "Warning"); } }
+    private async Task CopyAsync(string value, string label)
+    {
+        if (copying || value.Length == 0 || closed) return;
+        copying = true; int version = revision; SetStatus("正在复制" + label + "…");
+        bool copied = await ClipboardWriter.CopyAsync(value); copying = false;
+        if (!closed && version == revision) SetStatus(copied ? "已复制" + label : "剪贴板被占用，请重试", copied ? "Accent" : "Warning");
+    }
     internal async Task TranslateNowAsync()
     {
         debounce.Stop(); if (closed || paused || composing || string.IsNullOrWhiteSpace(Input.Text)) return;

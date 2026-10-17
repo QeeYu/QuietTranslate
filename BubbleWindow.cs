@@ -21,6 +21,7 @@ internal sealed class BubbleWindow : Window
     private readonly Native.Point pointer;
     private string pending = "";
     private bool dirty, closed;
+    private bool copying;
     public event Action? Dismissed;
     public string Translation => pending;
     internal void ApplyAppearance(Settings s) { view.SetTheme(Ui.IsDark); view.ApplyAppearance(s); ResizeToText(true); }
@@ -46,8 +47,13 @@ internal sealed class BubbleWindow : Window
         AllowsTransparency = true; Background = Brushes.Transparent; Opacity = 0; ShowInTaskbar = false; ShowActivated = false; Topmost = true;
         Width = 108; SizeToContent = SizeToContent.Height; MaxHeight = 400;
         FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI");
-        view = new BubbleView(opacity, fontSize, textColor, dark, Close, () =>
-        { try { if (!string.IsNullOrEmpty(pending)) { Clipboard.SetText(pending); view!.Notify("已复制"); } } catch (COMException) { view!.Notify("剪贴板被占用"); } });
+        view = new BubbleView(opacity, fontSize, textColor, dark, Close, async () =>
+        {
+            if (copying || pending.Length == 0) return;
+            copying = true; string snapshot = pending; view!.SetCopying(true);
+            bool copied = await ClipboardWriter.CopyAsync(snapshot); copying = false;
+            if (!closed) { view.SetCopying(false); if (pending == snapshot) view.Notify(copied ? "已复制" : "剪贴板被占用，请重试"); }
+        });
         Content = view;
         view.DragHandle.MouseLeftButtonDown += (_, e) =>
         {

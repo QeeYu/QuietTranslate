@@ -1,10 +1,10 @@
-﻿# QuietTranslate 1.5.6 验证与限制
+﻿# QuietTranslate 1.5.7 验证与限制
 
-核对日期：2026-10-17，Asia/Shanghai。Windows 11 x64；.NET SDK 8.0.426。无新增运行依赖或 OCR 模型，无翻译历史和结果缓存。
+核对日期：2026-10-18，Asia/Shanghai。Windows 11 x64；.NET SDK 8.0.426。无新增运行依赖或 OCR 模型，无翻译历史和结果缓存。
 
 ## 当前结果
 
-Release 构建与 win-x64 轻量发布成功；另对源码包的独立目录执行依赖还原和 Release 构建，0 警告、0 错误。此前 86 项检查与新增 4 项滚动清晰度／凭据状态检查全部通过，共 90 项；另通过 ui-smoke 桌面流程。所有接口使用合成内容与模拟服务，未使用真实账号计费接口。鼠标、剪贴板由对应测试恢复，专项检查未写入用户配置。
+Release 构建与 win-x64 轻量发布成功；另对源码包的独立目录执行依赖还原和 Release 构建，0 警告、0 错误。此前 90 项检查与新增 4 项复制／进程退出检查全部通过，共 94 项；另通过 ui-smoke 桌面流程。所有接口使用合成内容与模拟服务，未使用真实账号计费接口。鼠标、剪贴板由对应测试恢复，专项检查未写入用户配置。
 
 | 当前报告 | 结果 | 主要覆盖 |
 |---|---|---|
@@ -16,11 +16,26 @@ Release 构建与 win-x64 轻量发布成功；另对源码包的独立目录执
 | lifecycle-tests.json | 4 通过 | 主动翻译栏开关、关闭重入、快捷键与弹出菜单 |
 | upgrade-tests.json | 7 通过 | 主题持久化／切换、原生标题栏颜色提交、合并更新、渐进 SSE、悬停展开、滚轮与托盘弹出菜单 |
 | interaction-tests.json | 3 通过 | 正文无状态提示、连续滚动反向响应／细小增量、真实跨屏滚动拖选及点击单次翻译 |
+| copy-tests.json | 4 通过 | 剪贴板占用时按钮响应、工具栏／菜单、输入／输出／选中文字复制、失败提示与重试、关闭安全、三轮单实例与托盘退出 |
 | polish-tests.json | 4 通过 | 连续滚轮细腻推进、物理像素偏移、固定文字渲染、极小增量、AI／普通／OCR 保存与删除状态、地址隔离、速度偏好 |
 | motion-tests.json | 2 通过 | 31,500 字可见行绘制、原生滚轮、不抢焦点、追加保留阅读偏移、底部固定参考边与屏幕约束 |
 | ui-smoke.json | 通过 | 取词、连续快速划词、剪贴板恢复、截图拖选、热键及关闭行为 |
 
-上述均由当前 1.5.6 发布程序执行，原始 JSON 位于 validation。托盘弹出菜单测试包含实际打开与点击外部关闭；未自动点击 Windows 系统托盘展开区，不宣称覆盖全部任务栏外壳组合。
+上述均由当前 1.5.7 发布程序执行，原始 JSON 位于 validation。托盘弹出菜单测试包含实际打开与点击外部关闭；未自动点击 Windows 系统托盘展开区，不宣称覆盖全部任务栏外壳组合。
+
+## 1.5.7 复制与残留进程证据
+
+在用户授权后，对实际存在的三个 1.5.6 进程仅采集方法调用栈，未采集内存转储或变量值。两个主线程位于 Dispatcher.Shutdown → HwndSource.WeakEventDispatcherShutdown → WispTabletDeviceCollection.UpdateTablets → PenThreadWorker.WorkerGetTabletsInfo → WaitOne；另一个主线程处于正常消息循环。这确认存在“退出已开始但触笔设备等待未结束”的残留，并不是三个都在正常后台工作。诊断文件留在忽略的 work 目录，不随源码或运行包发布。
+
+1.5.7 在创建 WPF Application 前设置 EnablePointerSupport，使用 Windows 10+ 的 PointerLogic，避开旧 WISP 路径；不禁用全部触摸／触笔功能，不修改系统配置。再次启动时也先检查主实例并发送唤回事件，第二个进程无需创建 WPF Dispatcher。参考 [WPF StylusLogic 源码](https://github.com/dotnet/wpf/blob/v8.0.0/src/Microsoft.DotNet.Wpf/src/PresentationCore/System/Windows/Input/Stylus/Common/StylusLogic.cs)。
+
+相同复制占用用例在旧版同步路径中记录到约 1532 毫秒的按钮处理耗时，并出现复制未成功。基线只补测试入口／未用于旧按钮的辅助类，并启用指针开关以隔离已确认的退出挂起；保留原复制代码不变。修复前报告标记为 expectedFailure。WPF 8 Clipboard 实现包含同步 OLE 重试与刷新，见 [Clipboard 源码](https://github.com/dotnet/wpf/blob/v8.0.0/src/Microsoft.DotNet.Wpf/src/PresentationCore/System/Windows/clipboard.cs)。
+
+新版使用后台专用线程、隐藏消息窗口和即时 CF_UNICODETEXT 数据；在获得剪贴板前准备文本内存，成功提交后转交 Windows 管理，失败时清理内存与窗口。最多一个进行中的写入，不排队积累内容，重试等待留在后台。用户关闭气泡时不再更新已释放的控件。原生数据规则参考 [SetClipboardData](https://learn.microsoft.com/en-us/windows/win32/api/winuser/nf-winuser-setclipboarddata)。
+
+专项覆盖气泡按钮／菜单、输入栏原文／译文按钮和选区复制命令。占用约 350–450 毫秒时，当前机器记录按钮处理约 0–4 毫秒并正确写入包含日文、中文及 emoji 的长文本；1400 毫秒占用触发失败提示，释放后重试成功；复制中关闭气泡安全。耗时是当前机器的处理函数观测，不等于所有剪贴板管理器、远程桌面或硬件上的延迟保证；只有写入成功才显示“已复制”。
+
+使用隔离作用域与合成配置启动子进程，连续三轮验证：关闭设置后主进程正常留在托盘；重复启动的第二个进程及时退出并唤回主设置窗口；调用实际托盘退出菜单处理后主进程在四秒限时内退出。ready 记录确认实际输入栈为 PointerLogic。测试未读写用户配置或真实云端，临时剪贴板按序列号检查后恢复；无进程内存或真实复制文字写入报告。
 
 ## 1.5.6 分段滚动与保存状态
 

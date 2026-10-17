@@ -18,6 +18,8 @@ internal sealed class BubbleView : Border
     private readonly Button copyButton = ActionButton("\uE8C8", "复制译文"), moreButton = ActionButton("\uE712", "更多操作"), closeButton = ActionButton("\uE8BB", "关闭（Esc）");
     private readonly ContextMenu menu = new() { FontSize = 13, Placement = PlacementMode.Top, StaysOpen = false };
     private readonly MenuItem contextItem = new() { Header = "在翻译栏编辑原文…", Visibility = Visibility.Collapsed };
+    private readonly MenuItem copyItem = new() { Header = "复制译文" };
+    private bool copying;
     private bool dark;
     internal ScrollViewer Viewport => scroll;
     internal void SetTheme(bool value) { dark = value; Ui.Apply(this, dark); }
@@ -48,7 +50,8 @@ internal sealed class BubbleView : Border
         footer.Children.Add(copyButton); footer.Children.Add(moreButton); footer.Children.Add(closeButton); DockPanel.SetDock(footer, Dock.Right); header.Children.Add(footer);
         DragHandle.Child = new TextBlock { Text = "⠿", FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0), Opacity = .48 };
         header.Children.Add(DragHandle); toolbar.Child = header; stack.Children.Add(toolbar); stack.Children.Add(text);
-        var copyItem = new MenuItem { Header = "复制译文" }; copyItem.Click += (_, _) => { menu.IsOpen = false; copy(); };
+        copyButton.Name = "BubbleCopy";
+        copyItem.Click += (_, _) => { menu.IsOpen = false; copy(); };
         contextItem.Click += (_, _) => { var action = contextAction; menu.IsOpen = false; action?.Invoke(); };
         var closeItem = new MenuItem { Header = "关闭气泡（Esc）" }; closeItem.Click += (_, _) => { menu.IsOpen = false; close(); };
         menu.Items.Add(copyItem); menu.Items.Add(contextItem); menu.Items.Add(new Separator()); menu.Items.Add(closeItem);
@@ -133,10 +136,15 @@ internal sealed class BubbleView : Border
             double offset = scroll.VerticalOffset;
             if (value.StartsWith(text.Text, StringComparison.Ordinal)) text.AppendText(value[text.Text.Length..]);
             else text.Text = value;
-            scroll.ScrollToVerticalOffset(offset); copyButton.Content = "\uE8C8";
+            scroll.ScrollToVerticalOffset(offset); if (!copying) copyButton.Content = "\uE8C8";
         }
     }
     internal void Notify(string value) { copyButton.Content = value == "已复制" ? "\uE73E" : "\uE7BA"; copyButton.ToolTip = value; }
+    internal void SetCopying(bool value)
+    {
+        copying = value; copyButton.IsEnabled = copyItem.IsEnabled = !value;
+        copyButton.Content = value ? "\uE895" : "\uE8C8"; copyButton.ToolTip = value ? "正在复制…" : "复制译文";
+    }
     internal void SetContext(string label, Action action) { contextItem.Header = label; contextAction = action; contextItem.Visibility = Visibility.Visible; }
     internal void Clear() { menu.IsOpen = false; text.Text = ""; contextAction = null; contextItem.Visibility = Visibility.Collapsed; }
     internal byte BackgroundAlpha => ((SolidColorBrush)Background).Color.A;
