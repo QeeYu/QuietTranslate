@@ -44,7 +44,7 @@ internal static class MotionTest
                     void Frame(object? sender, EventArgs e) { double time = ((RenderingEventArgs)e).RenderingTime.TotalMilliseconds; if (previous >= 0 && time > previous) frames.Add(time - previous); previous = time; }
                     var cpu = Process.GetCurrentProcess().TotalProcessorTime; var elapsed = Stopwatch.StartNew();
                     CompositionTarget.Rendering += Frame;
-                    try { for (int i = 0; i < 45; i++) { SmoothScroll.Wheel(view, -30); await Task.Delay(16); } await Task.Delay(200); }
+                    try { for (int i = 0; i < 45; i++) { SmoothScroll.Wheel(view, -30); await Task.Delay(16); } await Task.Delay(350); }
                     finally { CompositionTarget.Rendering -= Frame; }
                     double offset = view.VerticalOffset;
                     Check(offset > 200 && Native.GetForegroundWindow() == foreground, "native scroll missing or stole focus");

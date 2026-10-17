@@ -76,6 +76,7 @@ public sealed class Settings
     public int CopyWaitMs { get; set; } = 900;
     public double BubbleOpacity { get; set; } = 0.92;
     public double BubbleFontSize { get; set; } = 16;
+    public double WheelScrollSpeed { get; set; } = .65;
     public string BubbleTextColor { get; set; } = "";
     public bool SelectionButtonEnabled { get; set; } = true;
     [System.Text.Json.Serialization.JsonIgnore]
@@ -100,6 +101,7 @@ public sealed class Settings
             value.CopyWaitMs = Math.Clamp(value.CopyWaitMs, 300, 2500);
             value.BubbleOpacity = double.IsFinite(value.BubbleOpacity) ? Math.Clamp(value.BubbleOpacity, 0, 1) : .92;
             value.BubbleFontSize = double.IsFinite(value.BubbleFontSize) ? Math.Clamp(value.BubbleFontSize, 12, 22) : 16;
+            value.WheelScrollSpeed = double.IsFinite(value.WheelScrollSpeed) ? Math.Clamp(value.WheelScrollSpeed, .25, 1.5) : .65;
             value.BubbleTextColor = NormalizeTextColor(value.BubbleTextColor);
             value.AutoTranslateDelay = Math.Clamp(value.AutoTranslateDelay, 300, 2000);
             value.ButtonSize = double.IsFinite(value.ButtonSize) ? Math.Clamp(value.ButtonSize, 28, 56) : 36;
@@ -190,6 +192,17 @@ internal static class Credentials
         Convert.ToHexString(System.Security.Cryptography.SHA256.HashData(Encoding.UTF8.GetBytes(endpoint.TrimEnd('/'))));
     internal static string Target(Provider provider, ServiceSettings settings) => Target(provider, settings.Endpoint) + (settings.CredentialId.Length == 0 ? "" : "/" + settings.CredentialId);
     internal static string TargetSecret(Provider provider, ServiceSettings settings) => Get(Target(provider, settings));
+    // Presence checks never copy the secret into a managed string or a visible field.
+    internal static bool Exists(string target)
+    {
+        if (!Read(target, 1, 0, out var pointer))
+        {
+            if (Marshal.GetLastWin32Error() == 1168) return false;
+            throw new Win32Exception(Marshal.GetLastWin32Error(), "无法确认密钥保存状态。");
+        }
+        try { return Marshal.PtrToStructure<Credential>(pointer).CredentialBlobSize > 0; }
+        finally { CredFree(pointer); }
+    }
     internal static string Get(string target)
     {
         if (!Read(target, 1, 0, out var pointer))

@@ -50,9 +50,9 @@ internal static class InteractionTest
                     await Task.Delay(45); double beforeReverse = view.VerticalOffset;
                     SmoothScroll.Wheel(view, 120); await Task.Delay(65); double afterReverse = view.VerticalOffset;
                     Check(afterReverse < beforeReverse - 10, $"kept moving in old direction: {beforeReverse} -> {afterReverse}");
-                    await Task.Delay(160); double settled = view.VerticalOffset; await Task.Delay(100); Check(Math.Abs(view.VerticalOffset - settled) < .1, "scroll tail continues after settling");
+                    await Task.Delay(320); double settled = view.VerticalOffset; await Task.Delay(100); Check(Math.Abs(view.VerticalOffset - settled) < .1, "scroll tail continues after settling");
                     for (int i = 0; i < 4; i++) SmoothScroll.Wheel(view, -15);
-                    await Task.Delay(190); double fine = view.VerticalOffset - settled; double expected = SystemParameters.WheelScrollLines * 18 * .5;
+                    await Task.Delay(340); double fine = view.VerticalOffset - settled; double expected = SystemParameters.WheelScrollLines * 18 * .5 * SmoothScroll.Speed;
                     Check(Math.Abs(fine - expected) < 1, $"fine wheel deltas lost: {fine}, expected {expected}");
                     observations["scroll"] = new { beforeReverse, afterReverse, settled, fine };
                 }

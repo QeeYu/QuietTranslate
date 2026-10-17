@@ -80,6 +80,7 @@ internal sealed class SettingsWindow : Window
         Toggle(bubble, "智能配色 · 按底色协调文字和图标，改善低对比配色", draft.BubbleSmartColors, v => draft.BubbleSmartColors = v, "BubbleSmartColors", look: true);
         Slider(bubble, "背景透明度", (1 - draft.BubbleOpacity) * 100, 0, 100, v => draft.BubbleOpacity = 1 - v / 100, "BubbleTransparency", true);
         Slider(bubble, "译文字号", draft.BubbleFontSize, 12, 22, v => draft.BubbleFontSize = v, "BubbleFontSize", true);
+        Slider(bubble, "滚轮速度（% · 较小更细腻）", draft.WheelScrollSpeed * 100, 25, 150, v => draft.WheelScrollSpeed = v / 100, "WheelScrollSpeed", true);
         var foregroundHex = Color(bubble, "文字颜色 · 留空自动匹配底色", draft.BubbleTextColor, v => draft.BubbleTextColor = v, "BubbleColorHex");
         var backgroundHex = Color(bubble, "背景颜色 · 留空跟随明暗主题", draft.BubbleBackgroundColor, v => draft.BubbleBackgroundColor = v, "BubbleBackgroundHex");
         var borderHex = Color(bubble, "边框颜色 · 留空自动协调", draft.BubbleBorderColor, v => draft.BubbleBorderColor = v, "BubbleBorderHex");
@@ -118,7 +119,7 @@ internal sealed class SettingsWindow : Window
             {
                 foreach (var change in changes) change(); foreach (var change in lookChanges) change(); service.Validate(); ocr.Validate(); if (!ValidateHotkeys()) return;
                 foreach (var pair in pendingKeys) Credentials.Set(pair.Key, pair.Value);
-                save(JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(draft))!); pendingKeys.Clear();
+                save(JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(draft))!); pendingKeys.Clear(); service.RefreshCredentialStatus(); ocr.RefreshCredentialStatus();
                 originalHotkeys.Clear(); foreach (var box in shortcutBoxes) originalHotkeys.Add(Hotkey.Parse(box.Text));
                 notice.Text = "已保存并立即生效。设置可以保持打开，切到其他应用即可翻译。";
             }

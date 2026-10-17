@@ -55,6 +55,7 @@ public sealed partial class App : Application
             if (args.Length > 0 && args[0] == "--interaction-test") { int code = await InteractionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--motion-test") { int code = await MotionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--docs-capture") { int code = await DocsCapture.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--polish-test") { int code = await PolishTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             app.Start();
         };
         app.Exit += (_, _) => app.Cleanup(); return app.Run();
@@ -72,7 +73,7 @@ public sealed partial class App : Application
         showWindow = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
         showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(showWindow, (_, _) => { if (!exiting) Dispatcher.BeginInvoke(new Action(OpenSettings)); }, null, Timeout.Infinite, false);
         try { settings = initial ?? Settings.Load(); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); Shutdown(); return; }
-        Ui.Theme = settings.Theme;
+        Ui.Theme = settings.Theme; SmoothScroll.Speed = settings.WheelScrollSpeed;
         hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) ToggleManual(); else _ = ExecuteAsync(id == 2); };
         selectionTrigger = new SelectionTrigger((source, anchor, text) => _ = ExecuteAsync(false, source, anchor, text), () => settings, () => mode == AppMode.Compatibility);
         trayMenu = new TrayMenu(() => OpenManual(), () => _ = ExecuteAsync(true), OpenImage, TogglePause, OpenSettings, () => Shutdown());
@@ -118,8 +119,8 @@ public sealed partial class App : Application
         settingsWindow = new SettingsWindow(settings, value =>
         {
             var old = settings;
-            try { hotkeys!.Apply(value, false); value.Save(); settings = value; Ui.Theme = settings.Theme; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); }
-            catch { settings = old; Ui.Theme = old.Theme; RefreshState(true); throw; }
+            try { hotkeys!.Apply(value, false); value.Save(); settings = value; Ui.Theme = settings.Theme; SmoothScroll.Speed = settings.WheelScrollSpeed; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); }
+            catch { settings = old; Ui.Theme = old.Theme; SmoothScroll.Speed = old.WheelScrollSpeed; RefreshState(true); throw; }
         });
         settingsWindow.RecordingChanged += value => { recording = value; if (value) { hotkeys?.Suspend(); if (selectionTrigger != null) selectionTrigger.Enabled = false; } else if (!exiting) RefreshState(true); };
         settingsWindow.Closed += (_, _) => { settingsWindow = null; recording = false; if (!exiting) RefreshState(true); }; settingsWindow.Show();

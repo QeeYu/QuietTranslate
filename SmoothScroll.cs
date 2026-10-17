@@ -11,9 +11,11 @@ namespace QuietTranslate;
 internal sealed class SmoothScroll
 {
     private static readonly DependencyProperty Behavior = DependencyProperty.RegisterAttached("Behavior", typeof(SmoothScroll), typeof(SmoothScroll));
+    internal static double Speed { get; set; } = .65;
     private readonly ScrollViewer view;
     private readonly Stopwatch watch = new();
-    private double target, previousFrame, lastInput;
+    private double target, position, previousFrame, lastInput;
+    private int direction;
     private bool running;
     private SmoothScroll(ScrollViewer view)
     {
@@ -33,9 +35,13 @@ internal sealed class SmoothScroll
     {
         double now = watch.Elapsed.TotalMilliseconds, dt = Math.Clamp(now - previousFrame, 0, 50); previousFrame = now;
         target = Math.Clamp(target, 0, view.ScrollableHeight);
-        double distance = target - view.VerticalOffset;
-        bool done = Math.Abs(distance) < .35 || now - lastInput >= 160;
-        view.ScrollToVerticalOffset(done ? target : view.VerticalOffset + distance * (1 - Math.Exp(-dt / 22)));
+        double scale = VisualTreeHelper.GetDpi(view).DpiScaleY;
+        double distance = target - position;
+        bool done = Math.Abs(distance) * scale < .4 || now - lastInput >= 300;
+        // Keep a continuous position between frames, but draw on physical pixels.
+        // A longer response joins consecutive wheel detents instead of finishing each as a short jump.
+        position = done ? target : position + distance * (1 - Math.Exp(-dt / 70));
+        view.ScrollToVerticalOffset(Math.Clamp(Math.Round(position * scale) / scale, 0, view.ScrollableHeight));
         if (done) Stop();
     }
     internal static void Attach(ScrollViewer view)
@@ -44,16 +50,23 @@ internal sealed class SmoothScroll
     }
     internal static void Attach(TextBox field)
     {
+        TextOptions.SetTextFormattingMode(field, TextFormattingMode.Display); TextOptions.SetTextHintingMode(field, TextHintingMode.Fixed);
         field.Loaded += (_, _) => { field.ApplyTemplate(); if (field.Template.FindName("PART_ContentHost", field) is ScrollViewer scroll) Attach(scroll); };
     }
     internal static bool Wheel(ScrollViewer view, int delta) { Attach(view); return ((SmoothScroll)view.GetValue(Behavior)).Move(delta); }
     private bool Move(int delta)
     {
         if (delta == 0 || view.ScrollableHeight <= 0 || SystemParameters.WheelScrollLines == 0) return false;
-        double amount = SystemParameters.WheelScrollLines < 0 ? view.ViewportHeight : SystemParameters.WheelScrollLines * 18;
-        double position = view.VerticalOffset;
+        double amount = (SystemParameters.WheelScrollLines < 0 ? view.ViewportHeight : SystemParameters.WheelScrollLines * 18) * Math.Clamp(Speed, .25, 1.5);
+        if (!running)
+        {
+            position = view.VerticalOffset;
+            double scale = VisualTreeHelper.GetDpi(view).DpiScaleY;
+            if (Math.Abs(position - Math.Round(target * scale) / scale) > .1) target = position;
+        }
         // Reverse immediately rather than first consuming a queued tail in the old direction.
-        if (!running || (delta > 0 && target > position) || (delta < 0 && target < position)) target = position;
+        if (direction != 0 && Math.Sign(delta) != direction) target = position = view.VerticalOffset;
+        direction = Math.Sign(delta);
         target = Math.Clamp(target - delta / 120.0 * amount, 0, view.ScrollableHeight);
         if (!running) { running = true; previousFrame = 0; watch.Restart(); CompositionTarget.Rendering += Render; }
         lastInput = watch.Elapsed.TotalMilliseconds; return true;

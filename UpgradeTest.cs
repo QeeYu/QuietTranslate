@@ -126,9 +126,10 @@ internal static class UpgradeTest
                     var scroll = bubble.View.Viewport; Check(scroll.ScrollableHeight > 200, "missing overflow"); var p = scroll.PointToScreen(new Point(scroll.ActualWidth / 2, 80)); Native.SetCursorPos((int)p.X, (int)p.Y); await Task.Delay(80);
                     Native.mouse_event(0x0800, 0, 0, unchecked((uint)-120), IntPtr.Zero); await Task.Delay(45); double middle = scroll.VerticalOffset; await Task.Delay(150); double end = scroll.VerticalOffset;
                     Check(middle > 0 && end > middle && end < 300, $"wheel not smooth: middle={middle}, end={end}"); Check(Native.GetForegroundWindow() == source, "wheel stole source focus");
+                    await Task.Delay(180); end = scroll.VerticalOffset;
                     bubble.SetText(bubble.Translation + "追加的新译文。", "stream"); await Task.Delay(180); Check(Math.Abs(scroll.VerticalOffset - end) < 1, "append moved reading position");
-                    SmoothScroll.Wheel(scroll, -30000); await Task.Delay(200); Check(Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 1, "bottom bound");
-                    SmoothScroll.Wheel(scroll, 30000); await Task.Delay(200); Check(scroll.VerticalOffset < 1, "top bound"); Render(bubble, Path.Combine(output, "bubble-dark.png"));
+                    SmoothScroll.Wheel(scroll, -30000); await Task.Delay(340); Check(Math.Abs(scroll.VerticalOffset - scroll.ScrollableHeight) < 1, "bottom bound");
+                    SmoothScroll.Wheel(scroll, 30000); await Task.Delay(340); Check(scroll.VerticalOffset < 1, "top bound"); Render(bubble, Path.Combine(output, "bubble-dark.png"));
                 }
                 finally { bubble?.Close(); owner.Close(); }
             });

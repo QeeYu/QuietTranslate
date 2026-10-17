@@ -41,7 +41,9 @@ internal static class DocsCapture
         app.TestException = e => errors.Add(e.ToString());
         try
         {
-            var settings = new Settings { Theme = ThemeMode.Light, AutoTranslateDelay = 800 };
+            var settings = new Settings { Theme = ThemeMode.Light, AutoTranslateDelay = 800, OcrProvider = OcrProvider.Windows };
+            // Isolate even credential-presence indicators from the user's real account.
+            foreach (var config in settings.Services.Values) config.CredentialId = Guid.NewGuid().ToString("N");
             var w = new SettingsWindow(settings, _ => { });
             try
             {

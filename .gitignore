@@ -14,3 +14,9 @@ validation/
 *.user
 *.suo
 settings.json
+credentials*.json
+secrets*.json
+*.pem
+*.dmp
+.ssh/
+.aws/

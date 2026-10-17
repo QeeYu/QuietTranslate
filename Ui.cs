@@ -30,6 +30,9 @@ internal static partial class Ui
     }
     internal static void Apply(FrameworkElement target, bool? dark = null)
     {
+        target.UseLayoutRounding = true; target.SnapsToDevicePixels = true;
+        TextOptions.SetTextFormattingMode(target, TextFormattingMode.Display);
+        TextOptions.SetTextHintingMode(target, TextHintingMode.Fixed);
         bool night = dark ?? IsDark;
         bool themed = target.Resources.Contains("UiThemeDark");
         target.Resources["UiThemeDark"] = night;

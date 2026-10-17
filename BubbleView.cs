@@ -32,6 +32,9 @@ internal sealed class BubbleView : Border
     internal BubbleView(double opacity, double fontSize, string textColor, bool? darkTheme, Action close, Action copy)
     {
         dark = darkTheme ?? Ui.IsDark; Ui.Apply(this, dark);
+        // Transparent surfaces use stable grayscale text, without subpixel colour fringes.
+        TextOptions.SetTextRenderingMode(text, TextRenderingMode.Grayscale);
+        TextOptions.SetTextHintingMode(text, TextHintingMode.Fixed);
         menu.Resources[SystemParameters.MenuPopupAnimationKey] = PopupAnimation.None;
         CornerRadius = new CornerRadius(11); Padding = new Thickness(12, 5, 12, 11); BorderThickness = new Thickness(1);
         System.Windows.Documents.TextElement.SetFontFamily(this, new FontFamily("Segoe UI, Microsoft YaHei UI"));
@@ -113,7 +116,7 @@ internal sealed class BubbleView : Border
         string value = string.IsNullOrWhiteSpace(Text) ? "正在翻译…" : Text.Trim();
         if (value.Length > 320) return maximumWidth;
         var formatted = new FormattedText(value, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-            new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch), text.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip);
+            new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch), text.FontSize, Brushes.Black, null, TextFormattingMode.Display, VisualTreeHelper.GetDpi(this).PixelsPerDip);
         double natural = formatted.WidthIncludingTrailingWhitespace;
         double content = natural <= limit ? natural : Math.Clamp(Math.Sqrt(Math.Max(1, natural * formatted.Height) * 2.8), Math.Min(150, limit), limit);
         formatted.MaxTextWidth = Math.Max(1, content);
