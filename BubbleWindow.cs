@@ -30,6 +30,12 @@ internal sealed class BubbleWindow : Window
     private bool resizePending, finalSize;
     private long lastResize;
     private bool dragging, positionedByUser;
+    private bool placementReady, growUp, growLeft;
+    private bool positionQueued;
+    private bool wheelQueued;
+    private int pendingWheel;
+    private Native.Rect wheelBounds;
+    private Native.Point placementEdge;
     private Native.Point dragStart, dragOrigin, pinnedPosition;
     internal bool PositionedByUser => positionedByUser;
     public BubbleWindow(Native.Rect anchorBounds, IntPtr foreground, double opacity, double fontSize = 16, bool? dark = null, string textColor = "")
@@ -37,7 +43,7 @@ internal sealed class BubbleWindow : Window
         anchor = anchorBounds; sourceWindow = foreground;
         pointer = anchorBounds.Left == anchorBounds.Right ? new(anchorBounds.Left, anchorBounds.Top) : Native.Cursor();
         Title = "轻译 · QuietTranslate"; WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
-        AllowsTransparency = true; Background = Brushes.Transparent; ShowInTaskbar = false; ShowActivated = false; Topmost = true;
+        AllowsTransparency = true; Background = Brushes.Transparent; Opacity = 0; ShowInTaskbar = false; ShowActivated = false; Topmost = true;
         Width = 108; SizeToContent = SizeToContent.Height; MaxHeight = 400;
         FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI");
         view = new BubbleView(opacity, fontSize, textColor, dark, Close, () =>
@@ -68,7 +74,7 @@ internal sealed class BubbleWindow : Window
             });
             Native.RegisterHotKey(handle, 91, 0x4000, 0x1B);
         };
-        ContentRendered += (_, _) => { FlushRender(); ResizeToText(true); Position(); }; SizeChanged += (_, _) => { if (IsVisible) Position(); };
+        ContentRendered += (_, _) => { FlushRender(); ResizeToText(true); QueuePosition(); }; SizeChanged += (_, _) => { if (IsVisible) QueuePosition(); };
         view.MouseLeave += (_, _) => resizePending = true;
         view.ActionsMenu.Closed += (_, _) => resizePending = true;
         view.ActionsMenu.Opened += (_, _) =>
@@ -82,7 +88,7 @@ internal sealed class BubbleWindow : Window
         mouseProc = OnMouse;
         Loaded += (_, _) =>
         {
-            Position();
+            QueuePosition();
             mouseHook = Native.SetWindowsHookEx(14, mouseProc, Native.GetModuleHandle(null), 0);
             focusTimer.Start(); renderTimer.Start();
         };
@@ -119,8 +125,16 @@ internal sealed class BubbleWindow : Window
         if (code >= 0 && message.ToInt32() == 0x20A && !view.IsMenuOpen && view.Viewport.ScrollableHeight > 0)
         {
             var point = Marshal.PtrToStructure<Native.Point>(data);
-            var local = view.Viewport.PointFromScreen(new Point(point.X, point.Y));
-            if (new Rect(view.Viewport.RenderSize).Contains(local) && SmoothScroll.Wheel(view.Viewport, (short)(Marshal.ReadInt32(data, 8) >> 16))) return new IntPtr(1);
+            if (point.X >= wheelBounds.Left && point.X < wheelBounds.Right && point.Y >= wheelBounds.Top && point.Y < wheelBounds.Bottom)
+            {
+                pendingWheel += (short)(Marshal.ReadInt32(data, 8) >> 16);
+                if (!wheelQueued)
+                {
+                    wheelQueued = true;
+                    Dispatcher.BeginInvoke(DispatcherPriority.Input, new Action(() => { wheelQueued = false; int delta = pendingWheel; pendingWheel = 0; if (!closed) SmoothScroll.Wheel(view.Viewport, delta); }));
+                }
+                return new IntPtr(1);
+            }
         }
         if (code >= 0 && dragging)
         {
@@ -141,7 +155,7 @@ internal sealed class BubbleWindow : Window
         if (!positionedByUser && Math.Abs(dx) < 3 && Math.Abs(dy) < 3) return;
         var handle = new WindowInteropHelper(this).Handle; Native.GetWindowRect(handle, out var r); var work = Native.WorkArea(point);
         pinnedPosition = new(Math.Clamp(dragOrigin.X + dx, work.Left + 8, Math.Max(work.Left + 8, work.Right - (r.Right - r.Left) - 8)), Math.Clamp(dragOrigin.Y + dy, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - (r.Bottom - r.Top) - 8)));
-        positionedByUser = true; if (pinnedPosition.X != r.Left || pinnedPosition.Y != r.Top) Native.SetWindowPos(handle, new IntPtr(-1), pinnedPosition.X, pinnedPosition.Y, 0, 0, 0x0011);
+        positionedByUser = true; if (pinnedPosition.X != r.Left || pinnedPosition.Y != r.Top) { Native.SetWindowPos(handle, new IntPtr(-1), pinnedPosition.X, pinnedPosition.Y, 0, 0, 0x0011); UpdateWheelBounds(); }
     }
     public void SetText(string value, string label, bool completed = false)
     {
@@ -151,6 +165,7 @@ internal sealed class BubbleWindow : Window
     private void FlushRender()
     {
         if (!dirty) return;
+        MinHeight = finalSize ? 0 : Math.Min(MaxHeight, Math.Max(MinHeight, ActualHeight));
         dirty = false; view.Text = pending; resizePending = true;
     }
     private void ResizeToText(bool force = false)
@@ -165,20 +180,47 @@ internal sealed class BubbleWindow : Window
         if (Math.Abs(Width - desired) > .5) Width = desired;
         resizePending = false; lastResize = Environment.TickCount64;
     }
+    private void QueuePosition()
+    {
+        if (closed || positionQueued) return;
+        positionQueued = true;
+        // SizeChanged can run before HWND autosizing completes. Position after that
+        // layout pass so the bottom edge is calculated from the actual new size.
+        Dispatcher.BeginInvoke(DispatcherPriority.Loaded, new Action(() => { positionQueued = false; if (!closed && IsVisible) Position(); }));
+    }
     private void Position()
     {
         var handle = new WindowInteropHelper(this).Handle;
         if (handle == IntPtr.Zero) return;
         var work = Native.WorkArea(positionedByUser ? pinnedPosition : pointer);
-        double scale = VisualTreeHelper.GetDpi(this).DpiScaleX;
+        var dpi = VisualTreeHelper.GetDpi(this); double scale = dpi.DpiScaleX;
         int maxWidth = Math.Max(60, work.Right - work.Left - 16);
         if (Width * scale > maxWidth) Width = maxWidth / scale;
-        MaxHeight = Math.Min(400, Math.Max(65, (work.Bottom - work.Top - 16) / scale));
+        MaxHeight = Math.Min(400, Math.Max(65, (work.Bottom - work.Top - 16) / dpi.DpiScaleY));
         Native.GetWindowRect(handle, out var rect);
         int width = rect.Right - rect.Left, height = rect.Bottom - rect.Top;
-        var p = positionedByUser ? new Native.Point(Math.Clamp(pinnedPosition.X, work.Left + 8, Math.Max(work.Left + 8, work.Right - width - 8)), Math.Clamp(pinnedPosition.Y, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - height - 8))) : PopupPlacement.Near(pointer, anchor, width, height, sourceWindow);
+        if (!positionedByUser && !placementReady && width > 0 && height > 0)
+        {
+            var initial = PopupPlacement.Near(pointer, anchor, width, height, sourceWindow);
+            growUp = initial.Y < pointer.Y || initial.Y + MaxHeight * dpi.DpiScaleY > work.Bottom - 8;
+            growLeft = initial.X < pointer.X || initial.X + 380 * scale > work.Right - 8;
+            placementEdge = new Native.Point(initial.X + (growLeft ? width : 0), initial.Y + (growUp ? height : 0));
+            placementReady = true;
+        }
+        var desired = positionedByUser ? pinnedPosition : new Native.Point(placementEdge.X - (growLeft ? width : 0), placementEdge.Y - (growUp ? height : 0));
+        var p = new Native.Point(Math.Clamp(desired.X, work.Left + 8, Math.Max(work.Left + 8, work.Right - width - 8)), Math.Clamp(desired.Y, work.Top + 8, Math.Max(work.Top + 8, work.Bottom - height - 8)));
         if (positionedByUser) pinnedPosition = p;
         Native.SetWindowPos(handle, new IntPtr(-1), p.X, p.Y, 0, 0, 0x0011); // NOSIZE | NOACTIVATE
+        UpdateWheelBounds(); Opacity = 1;
+    }
+    private void UpdateWheelBounds()
+    {
+        var viewport = view.Viewport; var dpi = VisualTreeHelper.GetDpi(this);
+        if (viewport.IsLoaded)
+        {
+            var origin = viewport.PointToScreen(new Point());
+            wheelBounds = new Native.Rect { Left = (int)origin.X, Top = (int)origin.Y, Right = (int)Math.Ceiling(origin.X + viewport.ActualWidth * dpi.DpiScaleX), Bottom = (int)Math.Ceiling(origin.Y + viewport.ActualHeight * dpi.DpiScaleY) };
+        }
     }
     internal static Native.Point Place(Native.Rect a, Native.Rect work, int width, int height)
     {

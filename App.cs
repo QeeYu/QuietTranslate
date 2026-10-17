@@ -53,6 +53,8 @@ public sealed partial class App : Application
             if (args.Length > 0 && args[0] == "--selection-fixture") { SelfTest.OpenSelectionFixture(app); return; }
             if (args.Length > 0 && args[0] == "--scroll-selection-fixture") { InteractionTest.OpenFixture(app); return; }
             if (args.Length > 0 && args[0] == "--interaction-test") { int code = await InteractionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--motion-test") { int code = await MotionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 0 && args[0] == "--docs-capture") { int code = await DocsCapture.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             app.Start();
         };
         app.Exit += (_, _) => app.Cleanup(); return app.Run();

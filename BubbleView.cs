@@ -11,7 +11,9 @@ namespace QuietTranslate;
 // Settings and live bubbles share layout, palette and glyph measurements.
 internal sealed class BubbleView : Border
 {
-    private readonly TextBlock text = new() { TextWrapping = TextWrapping.Wrap };
+    // TextBoxView keeps visuals for visible lines; a TextBlock inside an outer
+    // ScrollViewer formats/draws the entire long translation on every scroll frame.
+    private readonly TextBox text = new() { TextWrapping = TextWrapping.Wrap, IsReadOnly = true, IsUndoEnabled = false, IsReadOnlyCaretVisible = false, Focusable = false, IsTabStop = false, BorderThickness = new Thickness(0), Padding = new Thickness(0), Background = Brushes.Transparent, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled, Cursor = Cursors.Arrow, MaxHeight = 300 };
     private readonly ScrollViewer scroll;
     private readonly Button copyButton = ActionButton("\uE8C8", "复制译文"), moreButton = ActionButton("\uE712", "更多操作"), closeButton = ActionButton("\uE8BB", "关闭（Esc）");
     private readonly ContextMenu menu = new() { FontSize = 13, Placement = PlacementMode.Top, StaysOpen = false };
@@ -34,8 +36,6 @@ internal sealed class BubbleView : Border
         CornerRadius = new CornerRadius(11); Padding = new Thickness(12, 5, 12, 11); BorderThickness = new Thickness(1);
         System.Windows.Documents.TextElement.SetFontFamily(this, new FontFamily("Segoe UI, Microsoft YaHei UI"));
         var stack = new StackPanel();
-        scroll = new ScrollViewer { Content = text, MaxHeight = 300, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-        SmoothScroll.Attach(scroll);
         var header = new DockPanel { Height = 22, LastChildFill = true };
         var footer = new StackPanel { Orientation = Orientation.Horizontal };
         copyButton.Width = moreButton.Width = closeButton.Width = 22;
@@ -44,18 +44,20 @@ internal sealed class BubbleView : Border
         closeButton.Click += (_, _) => close();
         footer.Children.Add(copyButton); footer.Children.Add(moreButton); footer.Children.Add(closeButton); DockPanel.SetDock(footer, Dock.Right); header.Children.Add(footer);
         DragHandle.Child = new TextBlock { Text = "⠿", FontSize = 13, VerticalAlignment = VerticalAlignment.Center, Margin = new Thickness(4, 0, 0, 0), Opacity = .48 };
-        header.Children.Add(DragHandle); toolbar.Child = header; stack.Children.Add(toolbar); stack.Children.Add(scroll);
+        header.Children.Add(DragHandle); toolbar.Child = header; stack.Children.Add(toolbar); stack.Children.Add(text);
         var copyItem = new MenuItem { Header = "复制译文" }; copyItem.Click += (_, _) => { menu.IsOpen = false; copy(); };
         contextItem.Click += (_, _) => { var action = contextAction; menu.IsOpen = false; action?.Invoke(); };
         var closeItem = new MenuItem { Header = "关闭气泡（Esc）" }; closeItem.Click += (_, _) => { menu.IsOpen = false; close(); };
         menu.Items.Add(copyItem); menu.Items.Add(contextItem); menu.Items.Add(new Separator()); menu.Items.Add(closeItem);
-        ContextMenu = menu; Child = stack; ApplyAppearance(opacity, fontSize, textColor);
+        ContextMenu = text.ContextMenu = menu; Child = stack;
+        text.ApplyTemplate(); scroll = (ScrollViewer)text.Template.FindName("PART_ContentHost", text);
+        SmoothScroll.Attach(scroll); ApplyAppearance(opacity, fontSize, textColor);
     }
     internal void ApplyAppearance(double opacity, double fontSize, string textColor)
     {
         var surface = ((SolidColorBrush)Resources["UiSurface"]).Color;
         SetPalette(surface, textColor.Length == 0 ? ((SolidColorBrush)Resources["UiText"]).Color : Ui.Color(Settings.NormalizeTextColor(textColor)), ((SolidColorBrush)Resources["UiLine"]).Color, opacity, opacity);
-        text.FontSize = Math.Clamp(fontSize, 12, 22); text.LineHeight = text.FontSize * 1.45;
+        text.FontSize = Math.Clamp(fontSize, 12, 22);
         ColorAdjusted = false;
     }
     internal static SolidColorBrush Alpha(Color color, double opacity) => new(Color.FromArgb((byte)Math.Round(Math.Clamp(opacity, 0, 1) * 255), color.R, color.G, color.B));
@@ -111,15 +113,26 @@ internal sealed class BubbleView : Border
         string value = string.IsNullOrWhiteSpace(Text) ? "正在翻译…" : Text.Trim();
         if (value.Length > 320) return maximumWidth;
         var formatted = new FormattedText(value, CultureInfo.CurrentUICulture, FlowDirection.LeftToRight,
-            new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch), text.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip) { LineHeight = text.LineHeight };
+            new Typeface(text.FontFamily, text.FontStyle, text.FontWeight, text.FontStretch), text.FontSize, Brushes.Black, VisualTreeHelper.GetDpi(this).PixelsPerDip);
         double natural = formatted.WidthIncludingTrailingWhitespace;
         double content = natural <= limit ? natural : Math.Clamp(Math.Sqrt(Math.Max(1, natural * formatted.Height) * 2.8), Math.Min(150, limit), limit);
         formatted.MaxTextWidth = Math.Max(1, content);
         // One rounding guard prevents a final glyph wrapping because of fractional monitor scaling.
-        return Math.Clamp(Math.Ceiling(formatted.WidthIncludingTrailingWhitespace + chrome + 2), minimum, maximumWidth);
+        return Math.Clamp(Math.Ceiling(formatted.WidthIncludingTrailingWhitespace + chrome + 6), minimum, maximumWidth);
     }
-    internal void SetHeightLimit(double height) => scroll.MaxHeight = Math.Max(20, height - Padding.Top - Padding.Bottom - BorderThickness.Top - BorderThickness.Bottom - 29 - toolbar.BorderThickness.Bottom);
-    internal string Text { get => text.Text; set { if (text.Text != value) { text.Text = value; copyButton.Content = "\uE8C8"; } } }
+    internal void SetHeightLimit(double height) => text.MaxHeight = Math.Max(20, height - Padding.Top - Padding.Bottom - BorderThickness.Top - BorderThickness.Bottom - 29 - toolbar.BorderThickness.Bottom);
+    internal string Text
+    {
+        get => text.Text;
+        set
+        {
+            if (text.Text == value) return;
+            double offset = scroll.VerticalOffset;
+            if (value.StartsWith(text.Text, StringComparison.Ordinal)) text.AppendText(value[text.Text.Length..]);
+            else text.Text = value;
+            scroll.ScrollToVerticalOffset(offset); copyButton.Content = "\uE8C8";
+        }
+    }
     internal void Notify(string value) { copyButton.Content = value == "已复制" ? "\uE73E" : "\uE7BA"; copyButton.ToolTip = value; }
     internal void SetContext(string label, Action action) { contextItem.Header = label; contextAction = action; contextItem.Visibility = Visibility.Visible; }
     internal void Clear() { menu.IsOpen = false; text.Text = ""; contextAction = null; contextItem.Visibility = Visibility.Collapsed; }
