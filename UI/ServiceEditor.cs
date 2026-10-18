@@ -19,7 +19,7 @@ internal sealed class ServiceEditor : StackPanel
     private readonly PasswordBox key = new();
     private readonly TextBlock keyStatus = new() { Name = "ServiceKeyStatus", TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly Border keyBadge = new() { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, -5, 0, 12) };
-    private readonly CheckBox thinking = new() { Content = "使用此平台的关闭思考参数（仅支持的平台生效）" }, word = new() { Content = "孤立单词显示少量常见释义（仅 AI）" }, anonymous = new() { Content = "此服务无需密钥（如本机服务）" }, form = new() { Content = "使用表单编码（默认 POST JSON）" };
+    private readonly CheckBox thinking = new() { Content = "使用此平台的关闭思考参数（仅支持的平台生效）" }, word = new() { Content = "孤立单词显示少量常见释义（通用 AI）" }, anonymous = new() { Content = "此服务无需密钥（如本机服务）" }, form = new() { Content = "使用表单编码（默认 POST JSON）" };
     private readonly StackPanel modelArea = new(), idArea = new(), regionArea = new(), aiArea = new(), customArea = new();
     private readonly TextBlock note = Ui.Hint("");
     private int editing;
@@ -36,6 +36,7 @@ internal sealed class ServiceEditor : StackPanel
         Add(this, ocr ? "识别服务" : "翻译服务", choice); Add(this, "完整接口地址或 AI 基础地址", endpoint);
         key.Name = ocr ? "OcrKey" : "ServiceKey"; keyStatus.Name = ocr ? "OcrKeyStatus" : "ServiceKeyStatus";
         endpoint.Name = ocr ? "OcrEndpoint" : "ServiceEndpoint"; choice.Name = ocr ? "OcrChoice" : "ServiceChoice";
+        model.Name = ocr ? "OcrModel" : "ServiceModel"; prompt.Name = ocr ? "OcrPrompt" : "ServicePrompt";
         Add(this, "密钥 · 留空保留已保存值", key); keyBadge.Child = keyStatus; Children.Add(keyBadge);
         Add(idArea, "应用 ID / SecretId / 百度 OCR API Key（非密钥部分）", appId); Children.Add(idArea);
         Add(modelArea, "模型名称 · 以服务商控制台为准", model);
@@ -64,9 +65,9 @@ internal sealed class ServiceEditor : StackPanel
         forget.Click += (_, _) => { Commit(); pending[Target()] = ""; if (NeedsIdentity) { pending[Target() + "/id"] = ""; Config.AppId = ""; appId.Clear(); } key.Clear(); RefreshCredentialStatus(); note.Text = "保存并应用后删除密钥及相关应用标识。"; }; Children.Add(forget);
         aiArea.Children.Add(thinking); aiArea.Children.Add(word); Add(aiArea, "翻译提示词 · {source_language} / {target_language}", prompt);
         var presets = new WrapPanel();
-        foreach (var pair in new[] { ("恢复默认", ServiceSettings.DefaultPrompt), ("Discord 聊天", ServiceSettings.DefaultPrompt + " 保留聊天语气、缩写、表情、用户提及和频道名称，避免过度书面化。"), ("日文游戏", ServiceSettings.DefaultPrompt + " 注意游戏术语、人物称谓与日语省略。无法确定的专有名词保留原文，不添加剧情。") })
+        foreach (var pair in new[] { ("恢复默认", ServiceSettings.DefaultPrompt), ("仅翻译 · 同语种保留", ServiceSettings.TranslationOnlyPrompt), ("Discord 聊天", ServiceSettings.DefaultPrompt + " 保留聊天语气、缩写、表情、用户提及和频道名称，避免过度书面化。"), ("日文游戏", ServiceSettings.DefaultPrompt + " 注意游戏术语、人物称谓与日语省略。无法确定的专有名词保留原文，不添加剧情。") })
         { var p = pair; var button = new Button { Content = p.Item1, Margin = new Thickness(0, 0, 8, 0) }; button.Click += (_, _) => prompt.Text = p.Item2; presets.Children.Add(button); }
-        aiArea.Children.Add(presets); Children.Add(new Expander { Header = "AI 提示词与参数", Content = aiArea, IsExpanded = false });
+        aiArea.Children.Add(presets); Children.Add(new Expander { Header = "AI 提示词与参数", Name = ocr ? "OcrPromptOptions" : "ServicePromptOptions", Content = aiArea, IsExpanded = false });
         Add(customArea, "密钥请求头（如 Authorization；仅在模板传密钥时可留空）", header); Add(customArea, "密钥前缀（Bearer 后需一个空格；无需前缀可留空）", prefix); customArea.Children.Add(form);
         Add(customArea, ocr ? "POST 模板 · {image_base64} / {image_data_url} / {api_key}" : "POST 模板 · {text} / {source} / {target} / {api_key}", body);
         Add(customArea, "译文／文字 JSON 路径 · 如 data.text 或 results[].text", path);

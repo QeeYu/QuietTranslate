@@ -42,6 +42,17 @@ internal sealed class SettingsWindow : Window
         foreach (var text in new[] { settings.SelectionHotkey, settings.ScreenshotHotkey, settings.PauseHotkey, settings.ManualHotkey }) try { originalHotkeys.Add(Hotkey.Parse(text)); } catch { }
         Icon = AppIcons.Image; Title = "轻译 · 设置"; Width = 910; Height = Math.Min(800, SystemParameters.WorkArea.Height - 40); MinWidth = 760; MinHeight = 560; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI"); FontSize = 13; Ui.Apply(this, night); Ui.Bind(this, BackgroundProperty, "Bg"); Ui.Bind(this, ForegroundProperty, "Text");
+        notice.Name = "SettingsNotice";
+        // Intercept before TextBox's class handler performs synchronous OLE copy/flush.
+        CommandManager.AddPreviewExecutedHandler(this, async (_, e) =>
+        {
+            if (e.Command != ApplicationCommands.Copy || e.OriginalSource is not TextBox field || field.SelectionLength == 0) return;
+            e.Handled = true;
+            if (ClipboardWriter.IsBusy) return;
+            var token = lifetime.Token; string snapshot = field.SelectedText; notice.Text = "正在复制…";
+            bool copied = await ClipboardWriter.CopyAsync(snapshot);
+            if (!token.IsCancellationRequested && notice.Text == "正在复制…") notice.Text = copied ? "已复制" : "剪贴板被占用，请重试";
+        });
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) }); root.ColumnDefinitions.Add(new ColumnDefinition()); Content = root;
         var sidebar = new DockPanel { Margin = new Thickness(16, 26, 16, 20) }; var sideBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) }; Ui.Bind(sideBorder, Border.BackgroundProperty, "Surface"); Ui.Bind(sideBorder, Border.BorderBrushProperty, "Line"); root.Children.Add(sideBorder);
         var brand = new StackPanel { Margin = new Thickness(8, 0, 0, 28) }; brand.Children.Add(new TextBlock { Text = "轻译", FontSize = 29, FontWeight = FontWeights.SemiBold }); brand.Children.Add(Ui.Hint("随手选词，轻松表达")); DockPanel.SetDock(brand, Dock.Top); sidebar.Children.Add(brand);

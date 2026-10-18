@@ -60,7 +60,7 @@ internal static class CopyTest
                         if (menu) ((MenuItem)w.View.ActionsMenu.Items[0]).RaiseEvent(new RoutedEventArgs(MenuItem.ClickEvent)); else copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
                         long handler = watch.ElapsedMilliseconds; await Task.Delay(60); bool uiRanBeforeRelease = !released.IsCompleted;
                         observations[menu ? "bubbleMenu" : "bubbleButton"] = new { handlerMs = handler, uiRanBeforeRelease };
-                        await released; await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(80);
+                        await released; await Until(() => !ClipboardWriter.IsBusy && (copy.ToolTip as string) != "正在复制…");
                         observations[menu ? "bubbleMenuResult" : "bubbleButtonResult"] = new { tooltip = copy.ToolTip as string, busy = ClipboardWriter.IsBusy, visible = w.IsVisible, reason = w.DismissReason };
                         Check((copy.ToolTip as string) == "已复制", "copy not successful"); await Remember(text);
                         Check(handler < 100, "copy stalled UI during clipboard contention: " + handler + "ms");
@@ -90,13 +90,58 @@ internal static class CopyTest
                     }
                     finally { w.Close(); }
                 });
+                await Test("Settings fields copy through commands, keyboard and menus without blocking", async () =>
+                {
+                    var settings = new Settings(); string scope = Guid.NewGuid().ToString("N");
+                    foreach (var s in settings.Services.Values.Concat(settings.OcrServices.Values)) { s.Endpoint = "https://example.invalid/copy-" + scope; s.CredentialId = scope; }
+                    int saves = 0; var w = new SettingsWindow(settings, _ => saves++);
+                    try
+                    {
+                        w.Show(); w.Activate(); await Task.Delay(150);
+                        HoverTest.Find<Button>(w, "ServiceTab")!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Task.Delay(50);
+                        foreach (string name in new[] { "ServiceEndpoint", "ServiceModel", "ServicePrompt" })
+                        foreach (string mode in new[] { "command", "keyboard", "menu" })
+                        {
+                            if (name == "ServicePrompt") { HoverTest.Find<Expander>(w, "ServicePromptOptions")!.IsExpanded = true; await Task.Delay(50); }
+                            var field = HoverTest.Find<TextBox>(w, name)!; field.SelectAll(); field.BringIntoView(); field.Focus(); await Task.Delay(70);
+                            string expected = field.SelectedText; MenuItem? item = null; ContextMenu? menu = null;
+                            if (mode == "menu")
+                            {
+                                menu = new ContextMenu { PlacementTarget = field }; item = new MenuItem { Header = "复制", Command = ApplicationCommands.Copy, CommandTarget = field }; menu.Items.Add(item); menu.IsOpen = true; await Task.Delay(70);
+                            }
+                            var releaseGate = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                            var released = await HoldAsync(3000, releaseGate.Task); var watch = Stopwatch.StartNew();
+                            try
+                            {
+                                if (mode == "command") ApplicationCommands.Copy.Execute(null, field);
+                                else if (mode == "keyboard") Native.TestChord(new Hotkey(2, 0x43));
+                                else await HoverTest.ClickAsync(item!);
+                                await Task.Delay(60); long responseMs = watch.ElapsedMilliseconds;
+                                bool responsive = !released.IsCompleted;
+                                observations[name + "-" + mode] = new { responseMs, responsive };
+                                Check(responseMs < (mode == "command" ? 160 : 260) && responsive, "settings copy blocked UI: " + name + "/" + mode + ", " + responseMs + " ms");
+                            }
+                            finally { releaseGate.TrySetResult(); await released; }
+                            await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(30); await Remember(expected);
+                            Check(HoverTest.Find<TextBlock>(w, "SettingsNotice")!.Text == "已复制", "settings copy feedback missing");
+                            if (menu != null) menu.IsOpen = false;
+                        }
+                        var endpoint = HoverTest.Find<TextBox>(w, "ServiceEndpoint")!;
+                        var release = await HoldAsync(1400); ApplicationCommands.Copy.Execute(null, endpoint);
+                        await Until(() => !ClipboardWriter.IsBusy && HoverTest.Find<TextBlock>(w, "SettingsNotice")!.Text != "正在复制…");
+                        Check(HoverTest.Find<TextBlock>(w, "SettingsNotice")!.Text.Contains("被占用"), "settings copy failure reported success"); await release;
+                        release = await HoldAsync(300); ApplicationCommands.Copy.Execute(null, endpoint); w.Close(); await release; await Until(() => !ClipboardWriter.IsBusy); await Remember(endpoint.SelectedText);
+                        Check(saves == 0 && errors.Count == 0, "copy saved settings or accessed closed UI");
+                    }
+                    finally { w.Close(); }
+                });
                 await Test("Busy failure is honest, retry works, and closing during copy is safe", async () =>
                 {
                     var w = new BubbleWindow(anchor, IntPtr.Zero, .92); w.SetText("Synthetic retry", "synthetic", true); w.Show(); await Task.Delay(180);
                     try
                     {
                         var copy = HoverTest.Find<Button>(w, "BubbleCopy")!; var released = await HoldAsync(1400);
-                        copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => !ClipboardWriter.IsBusy); Check((copy.ToolTip as string)?.Contains("被占用") == true, "failed copy reported success");
+                        copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => !ClipboardWriter.IsBusy && (copy.ToolTip as string) != "正在复制…"); Check((copy.ToolTip as string)?.Contains("被占用") == true, "failed copy reported success");
                         await released; copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => (copy.ToolTip as string) == "已复制"); await Remember("Synthetic retry");
                         released = await HoldAsync(350); copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); w.Close(); await released; await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(40); await Remember("Synthetic retry");
                         Check(!w.IsVisible && errors.Count == 0, "late copy callback reopened or touched closed window");

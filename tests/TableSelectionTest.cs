@@ -39,7 +39,18 @@ internal static class TableSelectionTest
             for (int i = 0; i < 160; i++) { process.Refresh(); source = process.MainWindowHandle; if (source != IntPtr.Zero) break; await Task.Delay(50); }
             if (source == IntPtr.Zero) throw new Exception("Isolated Edge fixture did not open");
             Native.SetForegroundWindow(source); await Task.Delay(800); Native.TapKey(0x1B); await Task.Delay(200);
-            var document = await Task.Run(() => AutomationElement.FromHandle(source).FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document)));
+            AutomationElement? document = null;
+            for (int wait = 0; wait < 80; wait++)
+            {
+                process.Refresh(); source = process.MainWindowHandle;
+                if (source != IntPtr.Zero)
+                {
+                    var candidate = await Task.Run(() => AutomationElement.FromHandle(source).FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Document)));
+                    if (candidate != null && await Task.Run(() => candidate.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "Sample 01: select across cells and lines safely."))) != null)
+                    { document = candidate; break; }
+                }
+                await Task.Delay(100);
+            }
             if (document == null) throw new Exception("Fixture document unavailable");
             async Task<Rect> Cell(string name)
             {

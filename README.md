@@ -1,4 +1,4 @@
-﻿# 轻译 QuietTranslate
+# 轻译 QuietTranslate
 
 <img src="Assets/QuietTranslate.svg" width="64" align="right" alt="轻译轻翼图标" />
 
@@ -6,7 +6,7 @@
 
 Windows 上的轻量翻译工具：划词、截图 OCR、输入翻译；可接 AI 或普通翻译接口，无翻译历史记录。
 
-当前版本为 **1.5.9**，修复首次拖选、快速跨行及表格内取词漏弹出的问题。
+当前版本为 **1.5.10**，适配 Hunyuan-MT 翻译模型，修复设置窗口复制时的卡顿。
 
 [**下载 Windows 轻量版**](https://github.com/QeeYu/QuietTranslate/releases/latest) · [完整使用说明](docs/使用说明.md) · [更新说明](更新说明.md) · [本机 OCR 教程](local-ocr/本机OCR教程.md)
 
@@ -77,7 +77,7 @@ Windows 上的轻量翻译工具：划词、截图 OCR、输入翻译；可接 A
 | AI 翻译 | DeepSeek、通义千问／百炼、豆包／火山方舟、智谱 GLM、Kimi、硅基流动、自定义 OpenAI Chat Completions 兼容接口 |
 | 普通翻译 | Microsoft Translator、DeepL、Google Cloud Translation、百度、腾讯、有道、LibreTranslate、自定义 POST 接口 |
 
-AI 的 **高级设置 → 翻译提示词** 可编辑提示词，支持 `{source_language}`、`{target_language}`；原文单独作为用户消息发送。模型名称以服务商控制台为准，可尝试读取可用模型列表。多个账号或自定义地址可另存命名配置。
+AI 的 **高级设置 → 翻译提示词** 可编辑提示词，支持 `{source_language}`、`{target_language}`；通用 AI 将原文单独发送；Hunyuan-MT-7B 按模型要求将指令与原文合并为一条用户消息。模型名称以服务商控制台为准，可尝试读取可用模型列表。多个账号或自定义地址可另存命名配置。若选中中文仍出现回答，可选「仅翻译 · 同语种保留」预设；划词默认目标为简体中文，中译英请在输入栏选择英语。
 
 Google 使用 Cloud Translation API，需项目授权。应用不调用网页爬取翻译接口；API 权限、免费额度及收费由所选平台决定。自定义协议、鉴权字段和完整示例见 [使用说明](docs/使用说明.md#自定义-ai普通翻译和-ocr)。
 

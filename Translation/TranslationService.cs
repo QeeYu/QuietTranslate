@@ -44,12 +44,15 @@ public sealed class TranslationService : IDisposable
         if (Settings.IsAI(provider))
         {
             ApiSupport.Authenticate(request, settings, key);
+            string prompt = BuildPrompt(settings, text, target, source);
+            // Hunyuan-MT's documented format puts the instruction and source in one user turn.
+            var messages = IsHunyuanMT(settings.Model)
+                ? new[] { new { role = "user", content = prompt + "\n\n" + text } }
+                : new[] { new { role = "system", content = prompt }, new { role = "user", content = text } };
             var body = new Dictionary<string, object>
             {
                 ["model"] = settings.Model,
-                ["messages"] = new[] {
-                    new { role = "system", content = BuildPrompt(settings, text, target, source) },
-                    new { role = "user", content = text } },
+                ["messages"] = messages,
                 ["stream"] = true, ["max_tokens"] = 4096
             };
             if (settings.DisableThinking)
@@ -166,10 +169,14 @@ public sealed class TranslationService : IDisposable
     internal static string BuildPrompt(ServiceSettings settings, string text, string target, string source)
     {
         string prompt = string.IsNullOrWhiteSpace(settings.Prompt) ? ServiceSettings.DefaultPrompt : settings.Prompt;
+        bool translationOnly = IsHunyuanMT(settings.Model);
+        if (translationOnly && prompt == ServiceSettings.DefaultPrompt) prompt = ServiceSettings.TranslationOnlyPrompt;
         prompt = prompt.Replace("{target_language}", ApiSupport.LanguageName(target)).Replace("{source_language}", ApiSupport.LanguageName(source));
-        if (settings.WordMeanings && IsWord(text)) prompt += "\n当前输入是孤立单词或短词。若有常见歧义，最多列出三个常见的目标语言释义，可简写词性。不要虚构上下文；语种或含义无法确定时简短说明。专有名词或代码应保留。";
+        if (!translationOnly && settings.WordMeanings && IsWord(text)) prompt += "\n当前输入是孤立单词或短词。若有常见歧义，最多列出三个常见的目标语言释义，可简写词性。不要虚构上下文；语种或含义无法确定时简短说明。专有名词或代码应保留。";
         return prompt;
     }
+    private static bool IsHunyuanMT(string model) => model.Trim().Split('/')[^1].Equals("Hunyuan-MT-7B", StringComparison.OrdinalIgnoreCase)
+        || model.Trim().Split('/')[^1].Equals("Hunyuan-MT-7B-fp8", StringComparison.OrdinalIgnoreCase);
 
     internal static async Task<string> ReadStreamAsync(StreamReader reader, Action<string> update, CancellationToken ct, Provider? provider = null)
     {

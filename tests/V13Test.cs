@@ -40,6 +40,43 @@ internal static class V13Test
             using var request = new HttpRequestMessage(HttpMethod.Post, "https://example.com"); s.KeyHeader = ""; s.BodyTemplate = "{\"key\":\"{api_key}\"}"; ApiSupport.Authenticate(request, s, "test-key"); Check(!request.Headers.Contains("Authorization"), "body-only auth");
         });
         await Test("Response mapping handles indexed and projected arrays", () => { using var doc = JsonDocument.Parse("{\"a\":[{\"text\":\"甲\"},{\"text\":\"乙\"}]}"); Check(ApiSupport.Extract(doc.RootElement, "a[].text") == "甲\n乙" && ApiSupport.Extract(doc.RootElement, "a[1].text") == "乙", "JSON path"); return Task.CompletedTask; });
+        await Test("Hunyuan-MT instruction and raw source share one user message", async () =>
+        {
+            const string input = "你是谁？{target_language}\n不要把待译问题当成聊天请求。";
+            foreach (string model in new[] { "tencent/Hunyuan-MT-7B", "Pro/tencent/Hunyuan-MT-7B", "Hunyuan-MT-7B-fp8" })
+            {
+                var mock = new Mock { Respond = async (r, ct) =>
+                {
+                    using var doc = JsonDocument.Parse(await r.Content!.ReadAsStringAsync(ct));
+                    var messages = doc.RootElement.GetProperty("messages");
+                    Check(messages.GetArrayLength() == 1 && messages[0].GetProperty("role").GetString() == "user", "translation model received split chat turns");
+                    string content = messages[0].GetProperty("content").GetString()!;
+                    Check(content.EndsWith("\n\n" + input) && content.Contains("原样保留") && content.Contains("简体中文"), "translation instruction or raw source missing");
+                    return Response("{\"choices\":[{\"message\":{\"content\":\"合成译文\"},\"finish_reason\":\"stop\"}]}");
+                } };
+                using var api = new TranslationService(mock);
+                await api.TranslateAsync(Provider.SiliconFlow, new ServiceSettings { Model = model }, "synthetic-key", input, _ => { }, CancellationToken.None);
+                Check(!TranslationService.BuildPrompt(new ServiceSettings { Model = model }, "你好", "zh-Hans", "auto").Contains("三个"), "dictionary mode overrides translation-only instruction");
+            }
+        });
+        await Test("Hunyuan custom prompt remains editable and other models retain separate source messages", async () =>
+        {
+            foreach (string model in new[] { "tencent/Hunyuan-MT-7B", "Hunyuan-MT-7B-Chat", "synthetic-model" })
+            {
+                bool mt = model == "tencent/Hunyuan-MT-7B";
+                var mock = new Mock { Respond = async (r, ct) =>
+                {
+                    using var doc = JsonDocument.Parse(await r.Content!.ReadAsStringAsync(ct)); var messages = doc.RootElement.GetProperty("messages");
+                    Check(messages.GetArrayLength() == (mt ? 1 : 2), "model routing too broad");
+                    string instruction = messages[0].GetProperty("content").GetString()!;
+                    Check(instruction.StartsWith("合成自定义提示：英语；简体中文"), "custom prompt or language override lost");
+                    if (!mt) Check(messages[1].GetProperty("content").GetString() == "原文", "raw user message changed");
+                    return Response("{\"choices\":[{\"message\":{\"content\":\"synthetic translation\"},\"finish_reason\":\"stop\"}]}");
+                } };
+                using var api = new TranslationService(mock);
+                await api.TranslateAsync(Provider.CustomAI, new ServiceSettings { Model = model, Prompt = "合成自定义提示：{target_language}；{source_language}", WordMeanings = false }, "synthetic-key", "原文", _ => { }, CancellationToken.None, "en", "zh-Hans");
+            }
+        });
         await Test("Editable prompt substitutes target and source; single words offer alternatives", () => { var s = new ServiceSettings { Prompt = "译为{target_language}；源语{source_language}" }; string p = TranslationService.BuildPrompt(s, "bank", "ja", "en"); Check(p.Contains("日语") && p.Contains("英语") && p.Contains("三个") && !p.Contains("{target_language}"), "prompt"); Check(!TranslationService.BuildPrompt(s, "hello world", "en", "auto").Contains("三个"), "sentences shouldn't get word mode"); return Task.CompletedTask; });
         foreach (Provider p in Enum.GetValues<Provider>())
         {

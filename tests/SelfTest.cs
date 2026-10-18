@@ -356,11 +356,18 @@ internal static class SelfTest
             Check(Native.GetClipboardSequenceNumber() == sequence, "Direct read must not touch clipboard");
             string selected = await SelectionReader.ReadAsync(handle, 900, CancellationToken.None);
             Check(selected == "Hello Discord selection", "SendInput selection text");
-            Check(Clipboard.GetText() == "clipboard-sentinel", "Original clipboard text restored");
-            Check((Clipboard.GetData(DataFormats.Html) as string)?.Contains("clipboard-sentinel") == true, "Original clipboard HTML restored");
+            await DesktopProbe.ReadExpectedAsync("clipboard-sentinel");
+            object? restoredHtml = null;
+            for (int retry = 0; retry < 8; retry++)
+            {
+                try { restoredHtml = Clipboard.GetData(DataFormats.Html); break; }
+                catch (System.Runtime.InteropServices.COMException) when (retry < 7) { await Task.Delay(20); }
+            }
+            Check((restoredHtml as string)?.Contains("clipboard-sentinel") == true, "Original clipboard HTML restored");
             text.Select(0, 0); bool emptyRejected = false;
             try { await SelectionReader.ReadAsync(handle, 300, CancellationToken.None); } catch (InvalidOperationException) { emptyRejected = true; }
-            Check(emptyRejected && Clipboard.GetText() == "clipboard-sentinel", "No-selection must not translate stale clipboard");
+            Check(emptyRejected, "No-selection must not translate stale clipboard");
+            await DesktopProbe.ReadExpectedAsync("clipboard-sentinel");
             Native.GetWindowRect(handle, out var r);
             var captureTask = CaptureWindow.SelectAsync(CancellationToken.None);
             await Task.Delay(180);

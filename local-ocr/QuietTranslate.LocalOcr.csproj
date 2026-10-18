@@ -6,8 +6,8 @@
     <ImplicitUsings>enable</ImplicitUsings>
     <Nullable>enable</Nullable>
     <PlatformTarget>x64</PlatformTarget>
-    <Version>1.5.1</Version>
+    <Version>1.5.10</Version>
     <ApplicationIcon>..\Assets\QuietTranslate.ico</ApplicationIcon>
   </PropertyGroup>
-  <ItemGroup><Compile Include="..\WindowsOcr.cs" Link="WindowsOcr.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="..\OCR\WindowsOcr.cs" Link="WindowsOcr.cs" /></ItemGroup>
 </Project>
