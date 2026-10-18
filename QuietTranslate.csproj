@@ -11,8 +11,8 @@
     <ApplicationIcon>Assets\QuietTranslate.ico</ApplicationIcon>
     <StartupObject>QuietTranslate.App</StartupObject>
     <AssemblyName>QuietTranslate</AssemblyName>
-    <Version>1.5.8</Version>
-    <FileVersion>1.5.8.1</FileVersion>
+    <Version>1.5.9</Version>
+    <FileVersion>1.5.9.0</FileVersion>
     <PlatformTarget>x64</PlatformTarget>
     <DefaultItemExcludes>$(DefaultItemExcludes);work\**;artifacts\**;local-ocr\**;tests\**;dist\**;validation\**</DefaultItemExcludes>
   </PropertyGroup>

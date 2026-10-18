@@ -79,7 +79,8 @@ internal sealed class SelectionTrigger : IDisposable
                     Hide();
                     if (kind == 0x201)
                     {
-                        var foreground = Native.GetForegroundWindow(); Native.GetWindowThreadProcessId(foreground, out uint process);
+                        // The low-level hook runs before Windows activates the clicked window.
+                        var foreground = Native.GetAncestor(Native.WindowFromPoint(point), 2); Native.GetWindowThreadProcessId(foreground, out uint process);
                         var name = new System.Text.StringBuilder(80); Native.GetClassName(foreground, name, name.Capacity);
                         if (process != Environment.ProcessId && name.ToString() is not ("Progman" or "WorkerW" or "Shell_TrayWnd" or "Shell_SecondaryTrayWnd"))
                         { dragWindow = foreground; down = point; Native.GetWindowRect(foreground, out originalWindow); }
@@ -111,7 +112,7 @@ internal sealed class SelectionTrigger : IDisposable
         try
         {
             await Task.Delay(keyboard ? 220 : 120, ct);
-            if (!Enabled || Native.GetForegroundWindow() != window) return;
+            if (!Enabled || Native.GetForegroundWindow() != window) { State = "probe skipped: source not active"; return; }
             Native.GetWindowThreadProcessId(window, out uint process); if (process == Environment.ProcessId) return;
             SelectionReader.Selection? selected = null;
             // Latest gesture retries while a cancelled probe/old button monitor is releasing UIA.
@@ -119,7 +120,7 @@ internal sealed class SelectionTrigger : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Enabled || Native.GetForegroundWindow() != window) return;
-                selected = await SelectionReader.TryDirectAsync(window, ct);
+                selected = await SelectionReader.TryDirectAsync(window, ct, point);
                 State = $"probe {attempt}: {SelectionReader.ProbeState}, selected={selected != null}";
                 if (selected != null || SelectionReader.ProtectedWindow == window) break;
                 await Task.Delay(85, ct);
@@ -200,7 +201,7 @@ internal sealed class SelectionButtonWindow : Window
             checking = true; lastCheck = Environment.TickCount64;
             try
             {
-                var current = await SelectionReader.TryDirectAsync(source, lifetime.Token);
+                var current = await SelectionReader.TryDirectAsync(source, lifetime.Token, releasePoint);
                 if (closed) return;
                 // A timed-out/unavailable accessibility provider does not mean the selection was cleared.
                 // Outside clicks, typing, scrolling and focus changes already end the session reliably.

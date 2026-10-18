@@ -31,7 +31,7 @@ internal static class SelectionReader
 
     // UI Automation is optional: some Electron/Discord builds do not expose text ranges.
     // Only one outstanding probe is allowed, so a stuck third-party provider cannot accumulate threads.
-    public static async Task<Selection?> TryDirectAsync(IntPtr foreground, CancellationToken ct)
+    public static async Task<Selection?> TryDirectAsync(IntPtr foreground, CancellationToken ct, Native.Point? selectionPoint = null)
     {
         ct.ThrowIfCancellationRequested();
         if (Interlocked.CompareExchange(ref probing, 1, 0) != 0) return null;
@@ -65,15 +65,20 @@ internal static class SelectionReader
                 { var r = rectangles[^1]; bounds = new Native.Rect { Left = (int)r.Left, Top = (int)r.Top, Right = (int)r.Right, Bottom = (int)r.Bottom }; }
                 return new Selection(selected.ToString(), bounds, false);
                 }
-                var focused = ReadSelection(element); if (focused != null) { ProbeState = "selected text read"; return focused; }
-                // Electron message text may expose a range near the pointer while the input box owns focus.
-                var cursor = Native.Cursor(); var near = AutomationElement.FromPoint(new System.Windows.Point(cursor.X, cursor.Y));
-                for (int depth = 0; near != null && depth < 4; depth++)
+                // Mouse gestures use their release point, even if the pointer has since moved away.
+                // Table cells can be many raw-tree levels below the document that owns the selection.
+                if (selectionPoint == null)
+                { var focused = ReadSelection(element); if (focused != null) { ProbeState = "selected text read"; return focused; } }
+                var cursor = selectionPoint ?? Native.Cursor(); var near = AutomationElement.FromPoint(new System.Windows.Point(cursor.X, cursor.Y));
+                for (int depth = 0; near != null && depth < 16; depth++)
                 {
+                    ct.ThrowIfCancellationRequested();
                     if (near.Current.ProcessId != process) break;
                     var selection = ReadSelection(near); if (selection != null) return selection;
-                    near = TreeWalker.ControlViewWalker.GetParent(near);
+                    near = TreeWalker.RawViewWalker.GetParent(near);
                 }
+                if (selectionPoint != null)
+                { var focused = ReadSelection(element); if (focused != null) { ProbeState = "selected text read"; return focused; } }
                 ProbeState = "no readable text selection"; return (Selection?)null;
             }
             catch (Exception ex) { ProbeState = ex.GetType().Name; return (Selection?)null; }

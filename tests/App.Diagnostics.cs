@@ -27,6 +27,7 @@ public sealed partial class App
         app.DispatcherUnhandledException += (_, e) => { e.Handled = true; if (app.TestException != null) app.TestException(e.Exception); else MessageBox.Show("工具遇到错误：" + e.Exception.Message, "轻译", MessageBoxButton.OK, MessageBoxImage.Warning); };
         app.Startup += async (_, _) =>
         {
+            if (args.Length > 0 && args[0] == "--table-test") { int code = await TableSelectionTest.RunAsync(args[1]); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--self-test") { int code = await SelfTest.RunAsync(args.Length > 1 ? args[1] : Path.Combine(Environment.CurrentDirectory, "self-test-results.json")); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--ui-smoke") { int code = await SelfTest.UiSmokeAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--v13-test") { int code = await V13Test.RunAsync(args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }

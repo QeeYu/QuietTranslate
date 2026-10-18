@@ -17,6 +17,7 @@ try {
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     $hostExecutable = Join-Path $projectRoot 'tests/bin/Release/net8.0-windows10.0.19041.0/QuietTranslate.Tests.exe'
     $cases = @('self-test','v13-test','refinement-test','upgrade-test','bubble-test','hover-test','lifecycle-test','interaction-test','motion-test','polish-test','copy-test','growth-repro','ui-smoke')
+    if (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") { $cases += 'table-test' }
     $summary = @()
     foreach ($case in $cases) {
         $target = Join-Path $destination $case
