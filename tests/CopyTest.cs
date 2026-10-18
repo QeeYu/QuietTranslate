@@ -15,18 +15,20 @@ namespace QuietTranslate;
 
 internal static class CopyTest
 {
+    internal static string ExternalSample => string.Concat(Enumerable.Repeat("Synthetic clipboard interoperability 日本語 中文 😀\n", 32));
     [DllImport("user32.dll")] private static extern bool OpenClipboard(IntPtr owner);
     [DllImport("user32.dll")] private static extern bool CloseClipboard();
     private static void Check(bool value, string error) { if (!value) throw new Exception(error); }
     private static async Task Until(Func<bool> condition) { for (int i = 0; i < 100 && !condition(); i++) await Task.Delay(25); Check(condition(), "timed out waiting for copy result"); }
-    private static async Task<Task> HoldAsync(int ms)
+    private static async Task<Task> HoldAsync(int ms, Task? release = null)
     {
         var ready = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously); var released = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
         new Thread(() =>
         {
             bool open = false;
-            try { for (int i = 0; i < 40 && !(open = OpenClipboard(IntPtr.Zero)); i++) Thread.Sleep(20); ready.TrySetResult(open); if (open) Thread.Sleep(ms); }
-            finally { if (open) CloseClipboard(); released.TrySetResult(); }
+            var owner = DesktopProbe.ClipboardWindow();
+            try { if (owner != IntPtr.Zero) for (int i = 0; i < 40 && !(open = OpenClipboard(owner)); i++) Thread.Sleep(20); ready.TrySetResult(open); if (open) { if (release == null) Thread.Sleep(ms); else release.Wait(ms); } }
+            finally { if (open) CloseClipboard(); if (owner != IntPtr.Zero) DesktopProbe.DestroyWindow(owner); released.TrySetResult(); }
         }) { IsBackground = true }.Start();
         Check(await ready.Task, "could not acquire synthetic clipboard lock"); return released.Task;
     }
@@ -35,7 +37,11 @@ internal static class CopyTest
         Directory.CreateDirectory(output); var tests = new List<object>(); var observations = new Dictionary<string, object>(); var errors = new List<string>(); int failed = 0;
         var foreground = Native.GetForegroundWindow(); var cursor = Native.Cursor(); uint owned = 0; app.TestException = e => errors.Add(e.GetType().Name);
         if (SelectionReader.OleGetClipboard(out var original) != 0) throw new Exception("Clipboard snapshot unavailable");
-        void Remember(string expected) { uint before = Native.GetClipboardSequenceNumber(); Check(Clipboard.GetText() == expected, "copied text mismatch"); uint after = Native.GetClipboardSequenceNumber(); if (before == after) owned = after; }
+        async Task Remember(string expected, Action? blocked = null)
+        {
+            var read = await DesktopProbe.ReadExpectedAsync(expected, blocked); owned = read.sequence;
+            observations["readback-" + observations.Count] = new { read.attempts };
+        }
         async Task Test(string name, Func<Task> action) { try { await action(); tests.Add(new { name, status = "PASS" }); } catch (Exception ex) { failed++; tests.Add(new { name, status = "FAIL", error = ex.Message }); } }
         var work = Native.WorkArea(cursor); var anchor = new Native.Rect { Left = work.Left + 250, Right = work.Left + 250, Top = work.Top + 130, Bottom = work.Top + 130 };
         try
@@ -56,7 +62,7 @@ internal static class CopyTest
                         observations[menu ? "bubbleMenu" : "bubbleButton"] = new { handlerMs = handler, uiRanBeforeRelease };
                         await released; await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(80);
                         observations[menu ? "bubbleMenuResult" : "bubbleButtonResult"] = new { tooltip = copy.ToolTip as string, busy = ClipboardWriter.IsBusy, visible = w.IsVisible, reason = w.DismissReason };
-                        Check((copy.ToolTip as string) == "已复制", "copy not successful"); Remember(text);
+                        Check((copy.ToolTip as string) == "已复制", "copy not successful"); await Remember(text);
                         Check(handler < 100, "copy stalled UI during clipboard contention: " + handler + "ms");
                         Check(w.IsVisible && Native.GetForegroundWindow() == foreground, "copy closed bubble or changed foreground focus");
                     }
@@ -78,7 +84,7 @@ internal static class CopyTest
                             if (name == "selection") { w.Input.Select(0, 9); expected = w.Input.SelectedText; ApplicationCommands.Copy.Execute(null, w.Input); }
                             else { expected = name == "CopyInput" ? w.Input.Text : w.Output.Text; HoverTest.Find<Button>(w, name)!.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); }
                             long handler = watch.ElapsedMilliseconds; await Task.Delay(50); bool responsive = !released.IsCompleted; await released;
-                            await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(30); Remember(expected); observations["manual-" + name] = new { handlerMs = handler, responsive }; Check(handler < 100, "manual copy blocked UI");
+                            await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(30); await Remember(expected); observations["manual-" + name] = new { handlerMs = handler, responsive }; Check(handler < 100, "manual copy blocked UI");
                             Check(HoverTest.Find<TextBlock>(w, "ManualStatus")!.Text.StartsWith("已复制"), "copy feedback missing");
                         }
                     }
@@ -91,11 +97,34 @@ internal static class CopyTest
                     {
                         var copy = HoverTest.Find<Button>(w, "BubbleCopy")!; var released = await HoldAsync(1400);
                         copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => !ClipboardWriter.IsBusy); Check((copy.ToolTip as string)?.Contains("被占用") == true, "failed copy reported success");
-                        await released; copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => (copy.ToolTip as string) == "已复制"); Remember("Synthetic retry");
-                        released = await HoldAsync(350); copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); w.Close(); await released; await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(40); Remember("Synthetic retry");
+                        await released; copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); await Until(() => (copy.ToolTip as string) == "已复制"); await Remember("Synthetic retry");
+                        released = await HoldAsync(350); copy.RaiseEvent(new RoutedEventArgs(Button.ClickEvent)); w.Close(); await released; await Until(() => !ClipboardWriter.IsBusy); await Task.Delay(40); await Remember("Synthetic retry");
                         Check(!w.IsVisible && errors.Count == 0, "late copy callback reopened or touched closed window");
                     }
                     finally { w.Close(); }
+                });
+                await Test("Readback waits for a known holder; wrong clipboard values still fail", async () =>
+                {
+                    Check(await ClipboardWriter.CopyAsync("Synthetic readback"), "initial write failed");
+                    var blocked = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var release = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+                    var released = await HoldAsync(3000, release.Task);
+                    var read = Remember("Synthetic readback", () => blocked.TrySetResult());
+                    try { await blocked.Task.WaitAsync(TimeSpan.FromSeconds(2)); observations["controlledReadbackContention"] = true; }
+                    finally { release.TrySetResult(); await released; }
+                    await read;
+                    bool wrongFailed = false;
+                    try { await Remember("Synthetic wrong value"); } catch (Exception ex) when (ex.Message == "copied text mismatch") { wrongFailed = true; }
+                    Check(wrongFailed, "readback retries must not hide wrong output");
+                    Check(await ClipboardWriter.CopyAsync(ExternalSample), "external reader sample write failed"); await Remember(ExternalSample);
+                    for (int reader = 0; reader < 3; reader++)
+                    {
+                        string report = Path.Combine(output, "external-wpf-reader-" + reader + ".json");
+                        using var child = Process.Start(new ProcessStartInfo(Environment.ProcessPath!) { UseShellExecute = false, WindowStyle = ProcessWindowStyle.Hidden, ArgumentList = { "--clipboard-read-check", report } })!;
+                        try { await child.WaitForExitAsync().WaitAsync(TimeSpan.FromSeconds(5)); Check(child.ExitCode == 0, "independent WPF clipboard reader failed"); }
+                        finally { if (!child.HasExited) { child.Kill(); await child.WaitForExitAsync(); } }
+                    }
+                    observations["independentWpfReaders"] = 3;
                 });
                 await Test("Repeated launches reuse the primary; close-to-tray and tray exit leave no process", async () =>
                 {

@@ -65,6 +65,13 @@ internal sealed class SelectionTrigger : IDisposable
                     HidePopup(); dragScrolled = true; State = "drag scrolling";
                     return Native.CallNextHookEx(hook, code, message, data);
                 }
+                if (kind is 0x20A or 0x20E)
+                {
+                    // Scrolling ends a completed selection gesture even over our own button/tooltip.
+                    // Own-window filtering below is only for clicks, so clicking the button can still translate.
+                    Hide(); State = "wheel dismissed";
+                    return Native.CallNextHookEx(hook, code, message, data);
+                }
                 Native.GetWindowThreadProcessId(Native.WindowFromPoint(point), out uint clickedProcess);
                 dragWindow = IntPtr.Zero; dragScrolled = false;
                 if (clickedProcess != Environment.ProcessId)

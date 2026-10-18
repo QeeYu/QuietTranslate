@@ -110,39 +110,27 @@ public sealed class TranslationService : IDisposable
             ApiSupport.Authenticate(request, settings, key);
             request.Content = ApiSupport.Template(settings, new() { ["{text}"] = text, ["{source}"] = source, ["{target}"] = target, ["{api_key}"] = key });
         }
+        TranslationRequests.Turn? turn = null;
         try
         {
+            turn = await TranslationRequests.EnterAsync(endpoint, key, ct).ConfigureAwait(false);
             using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct).ConfigureAwait(false);
-            if (!response.IsSuccessStatusCode)
-            {
-                // Do not echo remote bodies: they can contain source text, key material, or gateway internals.
-                string hint = (int)response.StatusCode switch
-                {
-                    401 or 403 => "认证失败：检查 API Key、服务地址及区域。",
-                    402 or 456 => "额度不足，请检查服务余额。",
-                    404 => "接口或模型不存在，请检查基础地址与模型名。",
-                    429 => "请求过多或额度受限，请稍后重试。",
-                    400 => "请求不被服务接受；通用 AI 网关可尝试取消“发送关闭思考参数”。",
-                    >= 500 => "翻译服务暂时异常，请稍后重试。",
-                    _ => "翻译请求失败。"
-                };
-                throw new InvalidOperationException($"{hint}（HTTP {(int)response.StatusCode}）");
-            }
+            if (!response.IsSuccessStatusCode) throw await ServiceErrors.FromHttpAsync(response, ct, provider).ConfigureAwait(false);
             string result;
             if (Settings.IsAI(provider) && response.Content.Headers.ContentType?.MediaType == "text/event-stream")
             {
                 using var stream = await response.Content.ReadAsStreamAsync(ct).ConfigureAwait(false);
                 using var reader = new StreamReader(stream, Encoding.UTF8);
-                result = await ReadStreamAsync(reader, update, ct).ConfigureAwait(false);
+                result = await ReadStreamAsync(reader, update, ct, provider).ConfigureAwait(false);
             }
             else
             {
                 using var doc = await ApiSupport.ReadJson(response.Content, ct).ConfigureAwait(false);
                 var root = doc.RootElement;
+                if (ServiceErrors.FromJson(root, provider) is { } error) throw error;
                 if (Settings.IsAI(provider) && root.GetProperty("choices")[0].TryGetProperty("finish_reason", out var finish) &&
                     finish.ValueKind == JsonValueKind.String && finish.GetString() != "stop")
                     throw new InvalidOperationException("译文未完整返回（长度限制或内容限制），请缩短文字后重试。");
-                if (root.ValueKind == JsonValueKind.Object && (root.TryGetProperty("error", out _) || root.TryGetProperty("error_code", out _) || (root.TryGetProperty("errorCode", out var ec) && ec.ToString() != "0") || (root.TryGetProperty("Response", out var tcBody) && tcBody.TryGetProperty("Error", out _)))) throw new InvalidOperationException("服务返回业务错误，请检查密钥、权限、余额和语种支持。");
                 result = provider switch
                 {
                     Provider.Microsoft => root[0].GetProperty("translations")[0].GetProperty("text").GetString() ?? "",
@@ -160,11 +148,13 @@ public sealed class TranslationService : IDisposable
             if (string.IsNullOrWhiteSpace(result)) throw new InvalidOperationException("服务未返回译文；请确认模型支持此接口。");
             return result;
         }
+        catch (ServiceException ex) { turn?.BackOff(ex); throw; }
         catch (OperationCanceledException) when (!cancellation.IsCancellationRequested)
-        { throw new InvalidOperationException("翻译超时（30 秒），请检查网络后重试。"); }
+        { throw new InvalidOperationException("翻译等待或请求超时（30 秒），请稍后重试或检查网络。"); }
         catch (HttpRequestException) { throw new InvalidOperationException("连接翻译服务失败，请检查网络、代理和 API 地址。"); }
         catch (Exception ex) when (ex is JsonException or KeyNotFoundException or IndexOutOfRangeException)
         { throw new InvalidOperationException("服务返回格式不兼容，请检查服务类型和地址。"); }
+        finally { turn?.Dispose(); }
     }
 
     internal static bool IsWord(string text)
@@ -181,7 +171,7 @@ public sealed class TranslationService : IDisposable
         return prompt;
     }
 
-    internal static async Task<string> ReadStreamAsync(StreamReader reader, Action<string> update, CancellationToken ct)
+    internal static async Task<string> ReadStreamAsync(StreamReader reader, Action<string> update, CancellationToken ct, Provider? provider = null)
     {
         var result = new StringBuilder();
         var eventData = new StringBuilder();
@@ -192,7 +182,7 @@ public sealed class TranslationService : IDisposable
             if (data.Length == 0) return;
             if (data == "[DONE]") { finished = true; return; }
             using var doc = JsonDocument.Parse(data);
-            if (doc.RootElement.TryGetProperty("error", out _)) throw new InvalidOperationException("服务在流式响应中返回错误，请检查模型或稍后重试。");
+            if (ServiceErrors.FromJson(doc.RootElement, provider) is { } error) throw error;
             if (!doc.RootElement.TryGetProperty("choices", out var choices) || choices.GetArrayLength() == 0) return;
             var choice = choices[0];
             if (choice.TryGetProperty("delta", out var delta))

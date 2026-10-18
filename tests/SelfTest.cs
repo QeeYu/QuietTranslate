@@ -139,6 +139,38 @@ internal static class SelfTest
             using var cts = new CancellationTokenSource(); cts.Cancel(); bool canceled = false;
             try { await service.TranslateAsync(Provider.OpenAI, new(), "dummy", "Hello", _ => { }, cts.Token); } catch (OperationCanceledException) { canceled = true; } Check(canceled, "cancel");
         });
+        foreach (var item in new[] { ("1302", ServiceFailure.RateLimit), ("1305", ServiceFailure.Busy), ("1113", ServiceFailure.Quota), ("1308", ServiceFailure.Quota), ("1315", ServiceFailure.Authentication) })
+        await Test("GLM business error " + item.Item1 + " is distinct and redacted", async () =>
+        {
+            var handler = new MockHandler { Respond = _ => Task.FromResult(Response(JsonSerializer.Serialize(new { error = new { code = item.Item1, message = "private-sentinel" } }), status: HttpStatusCode.TooManyRequests)) };
+            using var service = new TranslationService(handler);
+            try { await service.TranslateAsync(Provider.GLM, new(), "dummy", "synthetic text", _ => { }, CancellationToken.None); throw new Exception("expected failure"); }
+            catch (ServiceException ex) { Check(ex.Failure == item.Item2 && ex.Message.Contains(item.Item1) && !ex.ToString().Contains("private-sentinel"), "specific safe error"); }
+            Check(handler.Calls == 1, "no automatic retry");
+        });
+        await Test("Unknown, oversized and non-JSON errors fall back without exposing remote data", async () =>
+        {
+            foreach (string body in new[] { "<html>private-sentinel</html>", JsonSerializer.Serialize(new { error = new { code = "private-sentinel", message = "private-sentinel" } }), new string('x', 17000) })
+            {
+                using var response = Response(body, status: HttpStatusCode.TooManyRequests);
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(7));
+                var error = await ServiceErrors.FromHttpAsync(response, CancellationToken.None, Provider.GLM);
+                Check(error.Failure == ServiceFailure.RateLimit && error.RetryAfter == TimeSpan.FromSeconds(7) && error.Message.Contains("7 秒") && !error.ToString().Contains("private-sentinel"), "safe fallback and retry hint");
+            }
+        });
+        await Test("HTTP 200 and stream business errors are handled before choices or partial success", async () =>
+        {
+            foreach (bool stream in new[] { false, true })
+            {
+                string body = "{\"error\":{\"code\":\"1305\",\"message\":\"private-sentinel\"}}";
+                var handler = new MockHandler { Respond = _ => Task.FromResult(Response(stream ? "data: " + body + "\n\n" : body, stream ? "text/event-stream" : "application/json")) };
+                using var service = new TranslationService(handler); bool updated = false;
+                try { await service.TranslateAsync(Provider.GLM, new(), "dummy", "synthetic text", _ => updated = true, CancellationToken.None); throw new Exception("expected business failure"); }
+                catch (ServiceException ex) { Check(ex.Failure == ServiceFailure.Busy && ex.Message.Contains("1305") && !updated, "business error is not a completed translation"); }
+            }
+            using var foreign = Response("{\"error\":{\"code\":\"1305\"}}", status: HttpStatusCode.TooManyRequests);
+            Check((await ServiceErrors.FromHttpAsync(foreign, CancellationToken.None, Provider.CustomAI)).Failure == ServiceFailure.RateLimit, "provider-specific numeric codes do not affect unrelated gateways");
+        });
         await Test("Credential Manager secret roundtrip and deletion, isolated target", () =>
         {
             string target = "QuietTranslate.SelfTest/" + Guid.NewGuid();
@@ -155,6 +187,37 @@ internal static class SelfTest
             await handler.Started.Task; cts.Cancel();
             try { await request; throw new Exception("Pending request was not canceled"); } catch (OperationCanceledException) { }
             Check(!updated && handler.Calls == 1, "No late text and no automatic retry");
+        });
+        await Test("Translation entrances serialize the same key, cancel queued work and allow unrelated services", async () =>
+        {
+            var firstHandler = new MockHandler { BlockUntilCanceled = true };
+            var nextHandler = new MockHandler { Respond = _ => Task.FromResult(Response("{\"choices\":[{\"message\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}")) };
+            using var first = new TranslationService(firstHandler); using var next = new TranslationService(nextHandler);
+            using var pending = new CancellationTokenSource(); using var queued = new CancellationTokenSource();
+            string key = Guid.NewGuid().ToString();
+            var running = first.TranslateAsync(Provider.CustomAI, new(), key, "synthetic", _ => { }, pending.Token);
+            await firstHandler.Started.Task;
+            var canceled = next.TranslateAsync(Provider.CustomAI, new(), key, "stale input", _ => throw new Exception("stale update"), queued.Token);
+            var waiting = next.TranslateAsync(Provider.CustomAI, new(), key, "new input", _ => { }, CancellationToken.None);
+            await Task.Delay(40); Check(nextHandler.Calls == 0, "same service must wait across instances");
+            queued.Cancel(); try { await canceled; throw new Exception("queued input must cancel"); } catch (OperationCanceledException) { }
+            Check(await next.TranslateAsync(Provider.CustomAI, new(), key + "other", "independent", _ => { }, CancellationToken.None) == "ok", "unrelated key progresses");
+            pending.Cancel(); try { await running; throw new Exception("running input must cancel"); } catch (OperationCanceledException) { }
+            Check(await waiting == "ok" && nextHandler.Calls == 2, "only newest queued text sent after release");
+        });
+        await Test("Retry-After delays the next explicit request and remains cancellable without resending", async () =>
+        {
+            var handler = new MockHandler { Respond = _ =>
+            {
+                var response = Response("{\"error\":{\"code\":\"rate_limit_exceeded\"}}", status: HttpStatusCode.TooManyRequests);
+                response.Headers.RetryAfter = new System.Net.Http.Headers.RetryConditionHeaderValue(TimeSpan.FromSeconds(60));
+                return Task.FromResult(response);
+            } };
+            using var service = new TranslationService(handler); string key = Guid.NewGuid().ToString();
+            await Reject(async () => await service.TranslateAsync(Provider.CustomAI, new(), key, "synthetic", _ => { }, CancellationToken.None), "limited");
+            using var cancel = new CancellationTokenSource(60);
+            try { await service.TranslateAsync(Provider.CustomAI, new(), key, "synthetic", _ => throw new Exception("unexpected update"), cancel.Token); throw new Exception("cooldown must cancel"); } catch (OperationCanceledException) { }
+            Check(handler.Calls == 1, "cooldown did not resend a request or retain queued text");
         });
         await Test("Native hotkey registration and release", () =>
         {

@@ -73,20 +73,39 @@ internal static class InteractionTest
                     Native.mouse_event(2, 0, 0, 0, IntPtr.Zero); Native.mouse_event(4, 0, 0, 0, IntPtr.Zero); await Task.Delay(100); Check(Native.GetForegroundWindow() == source, "external fixture did not focus");
                     var element = AutomationElement.FromHandle(source).FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Edit));
                     var bounds = element.Current.BoundingRectangle; trigger.Enabled = true; uint clipboard = Native.GetClipboardSequenceNumber();
+                    using var wheelProbe = new DesktopProbe.Wheel(source);
                     async Task SelectWithWheel()
                     {
                         Native.TestChord(new Hotkey(2, 0x24)); await Task.Delay(100);
-                        Native.SetCursorPos((int)bounds.Left + 12, (int)bounds.Top + 12); Native.mouse_event(2, 0, 0, 0, IntPtr.Zero); await Task.Delay(60);
+                        Native.SetCursorPos((int)bounds.Left + 12, (int)bounds.Top + 12); Native.mouse_event(2, 0, 0, 0, IntPtr.Zero);
+                        await DesktopProbe.UntilAsync(() => Native.Down(1), "Injected selection mouse-down was not delivered");
                         Native.SetCursorPos((int)bounds.Left + 310, (int)bounds.Top + 140); await Task.Delay(60);
                         for (int i = 0; i < 4; i++) { Native.mouse_event(0x0800, 0, 0, unchecked((uint)-120), IntPtr.Zero); await Task.Delay(35); }
                         Native.SetCursorPos((int)bounds.Left + 311, (int)bounds.Top + 145); await Task.Delay(50); Native.mouse_event(4, 0, 0, 0, IntPtr.Zero);
+                        await DesktopProbe.UntilAsync(() => !Native.Down(1), "Injected selection mouse-up was not delivered");
                         for (int i = 0; i < 65 && trigger.VisibleButton == null; i++) await Task.Delay(40);
                         Check(trigger.VisibleButton is { IsVisible: true }, "scroll selection lost button: " + trigger.State + ", UIA=" + SelectionReader.ProbeState + ", leftHeld=" + Native.Down(1) + ", focused=" + (Native.GetForegroundWindow() == source));
                         Check(trigger.VisibleButton!.SourceText?.Length > 100, "fixture did not select a long range");
                     }
                     await SelectWithWheel();
                     Check(calls == 0 && Native.GetClipboardSequenceNumber() == clipboard, "wheel-selection caused copy or premature translation");
-                    Native.mouse_event(0x0800, 0, 0, 120, IntPtr.Zero); await Task.Delay(350); Check(trigger.VisibleButton == null, "ordinary scrolling no longer dismisses old button");
+                    int wheelCount = wheelProbe.Count;
+                    Native.mouse_event(0x0800, 0, 0, 120, IntPtr.Zero);
+                    await DesktopProbe.UntilAsync(() => wheelProbe.Count > wheelCount, "Injected ordinary wheel was not observed"); await Task.Delay(150);
+                    bool ordinaryDismissed = trigger.VisibleButton == null;
+                    observations["ordinaryWheel"] = new { dismissed = ordinaryDismissed, wheel = wheelProbe.Snapshot(), state = trigger.State };
+                    await SelectWithWheel();
+                    var face = (FrameworkElement)((Border)trigger.VisibleButton!.Content).Child;
+                    var center = face.PointToScreen(new Point(face.ActualWidth / 2, face.ActualHeight / 2));
+                    Native.SetCursorPos((int)center.X, (int)center.Y); await Task.Delay(80);
+                    Check(DesktopProbe.Hits(trigger.VisibleButton!), "Translation button is covered before wheel injection");
+                    wheelCount = wheelProbe.Count;
+                    Native.mouse_event(0x0800, 0, 0, 120, IntPtr.Zero);
+                    await DesktopProbe.UntilAsync(() => wheelProbe.Count > wheelCount, "Injected button wheel was not observed"); await Task.Delay(150);
+                    observations["buttonWheel"] = new { dismissed = trigger.VisibleButton == null, wheel = wheelProbe.Snapshot(), state = trigger.State };
+                    Check(wheelProbe.LastWasOwnReleasedWheel, "Button-wheel observation did not hit the intended released-pointer target");
+                    Check(trigger.VisibleButton == null, "wheel over translation button leaves stale button visible");
+                    Check(ordinaryDismissed, "ordinary scrolling no longer dismisses old button");
                     await SelectWithWheel(); string snapshot = trigger.VisibleButton!.SourceText!;
                     await HoverTest.ClickAsync((FrameworkElement)((Border)trigger.VisibleButton.Content).Child); await Task.Delay(100);
                     Check(calls == 1 && translated == snapshot && Native.GetForegroundWindow() == source && trigger.VisibleButton == null, "click did not translate selection once, preserve focus and close button");

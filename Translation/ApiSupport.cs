@@ -75,15 +75,15 @@ internal static class ApiSupport
     internal static async Task<JsonDocument> SendJson(HttpClient client, HttpRequestMessage request, CancellationToken ct)
     {
         using var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, ct);
-        if (!response.IsSuccessStatusCode) throw new InvalidOperationException($"服务请求失败（HTTP {(int)response.StatusCode}）：检查地址、权限、额度和网络。远端响应未记录。");
+        if (!response.IsSuccessStatusCode) throw await ServiceErrors.FromHttpAsync(response, ct).ConfigureAwait(false);
         return await ReadJson(response.Content, ct);
     }
-    internal static async Task<JsonDocument> ReadJson(HttpContent content, CancellationToken ct)
+    internal static async Task<JsonDocument> ReadJson(HttpContent content, CancellationToken ct, int maxBytes = 4 * 1024 * 1024)
     {
-        if (content.Headers.ContentLength > 4 * 1024 * 1024) throw new InvalidOperationException("服务返回内容过大。");
+        if (content.Headers.ContentLength > maxBytes) throw new InvalidOperationException("服务返回内容过大。");
         using var stream = await content.ReadAsStreamAsync(ct);
         using var memory = new System.IO.MemoryStream(); byte[] buffer = new byte[8192]; int count;
-        while ((count = await stream.ReadAsync(buffer, ct)) > 0) { if (memory.Length + count > 4 * 1024 * 1024) throw new InvalidOperationException("服务返回内容过大。"); await memory.WriteAsync(buffer.AsMemory(0, count), ct); }
+        while ((count = await stream.ReadAsync(buffer, ct)) > 0) { if (memory.Length + count > maxBytes) throw new InvalidOperationException("服务返回内容过大。"); await memory.WriteAsync(buffer.AsMemory(0, count), ct); }
         memory.Position = 0; return await JsonDocument.ParseAsync(memory, cancellationToken: ct);
     }
     internal static string Hash(string text) => Convert.ToHexString(SHA256.HashData(Encoding.UTF8.GetBytes(text))).ToLowerInvariant();
