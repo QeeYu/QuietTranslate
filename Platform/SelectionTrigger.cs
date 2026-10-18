@@ -114,27 +114,28 @@ internal sealed class SelectionTrigger : IDisposable
             await Task.Delay(keyboard ? 220 : 120, ct);
             if (!Enabled || Native.GetForegroundWindow() != window) { State = "probe skipped: source not active"; return; }
             Native.GetWindowThreadProcessId(window, out uint process); if (process == Environment.ProcessId) return;
+            bool clipboardOnClick = SelectionReader.PreferClipboard(window);
             SelectionReader.Selection? selected = null;
             // Latest gesture retries while a cancelled probe/old button monitor is releasing UIA.
-            for (int attempt = 0; attempt < 8; attempt++)
+            for (int attempt = 0; attempt < (clipboardOnClick ? 1 : 8); attempt++)
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Enabled || Native.GetForegroundWindow() != window) return;
                 selected = await SelectionReader.TryDirectAsync(window, ct, point);
                 State = $"probe {attempt}: {SelectionReader.ProbeState}, selected={selected != null}";
                 if (selected != null || SelectionReader.ProtectedWindow == window) break;
-                await Task.Delay(85, ct);
+                if (!clipboardOnClick) await Task.Delay(85, ct);
             }
             ct.ThrowIfCancellationRequested();
             if (SelectionReader.ProtectedWindow == window) return;
             bool guessed = selected == null;
-            if (guessed && (keyboard || !compatibility())) return;
-            var anchor = selected?.Bounds ?? new Native.Rect { Left = point.X, Right = point.X, Top = point.Y, Bottom = point.Y };
+            if (guessed && (keyboard || !(compatibility() || clipboardOnClick))) return;
+            var pointerAnchor = new Native.Rect { Left = point.X, Right = point.X, Top = point.Y, Bottom = point.Y };
+            var anchor = clipboardOnClick ? pointerAnchor : selected?.Bounds ?? pointerAnchor;
             if (Native.GetForegroundWindow() != window) return;
             if (popup != null && popup.SourceText == selected?.Text && SameRect(popup.Anchor, anchor)) return;
             popup?.Close();
-            var pointerAnchor = new Native.Rect { Left = point.X, Right = point.X, Top = point.Y, Bottom = point.Y };
-            var button = new SelectionButtonWindow(window, anchor, selected?.Text, options(), guessed, (text) => { Hide(); translate(window, pointerAnchor, text); }, point); popup = button;
+            var button = new SelectionButtonWindow(window, anchor, clipboardOnClick ? null : selected?.Text, options(), guessed, (text) => { Hide(); translate(window, pointerAnchor, text); }, point, !clipboardOnClick); popup = button;
             button.Closed += (_, _) => { if (ReferenceEquals(popup, button)) popup = null; };
             button.Show();
             State = "button shown";
@@ -156,12 +157,12 @@ internal sealed class SelectionButtonWindow : Window
     internal Native.Rect Anchor { get; }
     private bool checking, closed;
     internal string DismissReason { get; private set; } = "external";
-    internal SelectionButtonWindow(IntPtr source, Native.Rect anchor, string? text, Settings s, bool guessed, Action<string?> click, Native.Point? releasePoint = null)
+    internal SelectionButtonWindow(IntPtr source, Native.Rect anchor, string? text, Settings s, bool guessed, Action<string?> click, Native.Point? releasePoint = null, bool verifySelection = true)
     {
         SourceText = text; Anchor = anchor; Native.GetWindowRect(source, out var sourceRect);
         Title = "轻译 · 点击翻译选中文字"; Width = Height = Math.Clamp(s.ButtonSize, 28, 56); WindowStyle = WindowStyle.None; ResizeMode = ResizeMode.NoResize;
         ShowActivated = false; ShowInTaskbar = false; AllowsTransparency = true; Background = Brushes.Transparent; Topmost = true; Ui.Apply(this);
-        var border = CreateFace(s); var button = new Button { Content = s.ButtonLabel, Focusable = false, FontFamily = new FontFamily("Microsoft YaHei UI"), FontSize = Math.Max(13, Width * .4), FontWeight = FontWeights.SemiBold, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = new SolidColorBrush(TextColor(s)), BorderThickness = new Thickness(0), ToolTip = guessed ? "兼容选区 · 点击后复制并翻译" : "点击翻译选中文字 · 未发送网络请求" };
+        var border = CreateFace(s); var button = new Button { Content = s.ButtonLabel, Focusable = false, FontFamily = new FontFamily("Microsoft YaHei UI"), FontSize = Math.Max(13, Width * .4), FontWeight = FontWeights.SemiBold, Padding = new Thickness(0), Background = Brushes.Transparent, Foreground = new SolidColorBrush(TextColor(s)), BorderThickness = new Thickness(0), ToolTip = guessed || !verifySelection ? "兼容选区 · 点击后复制并翻译" : "点击翻译选中文字 · 未发送网络请求" };
         if (s.ButtonShadow) { Width += 12; Height += 12; border.Margin = new Thickness(6); }
         border.Child = button; Content = border;
         button.Click += (_, _) => { button.IsEnabled = false; string? snapshot = SourceText; click(snapshot); };
@@ -197,7 +198,7 @@ internal sealed class SelectionButtonWindow : Window
             bool nearby = IsMouseOver || (p.X >= a.Left - 12 && p.X <= a.Right + 80 && p.Y >= a.Top - 28 && p.Y <= a.Bottom + 60);
             if (nearby) active = Environment.TickCount64;
             if (guessed && Environment.TickCount64 - active > Math.Clamp(s.CompatibilityTimeout, 3, 60) * 1000) { DismissReason = "compatibility timeout"; Close(); return; }
-            if (guessed || checking || IsMouseOver || Environment.TickCount64 - lastCheck < 700) return;
+            if (guessed || !verifySelection || checking || IsMouseOver || Environment.TickCount64 - lastCheck < 700) return;
             checking = true; lastCheck = Environment.TickCount64;
             try
             {

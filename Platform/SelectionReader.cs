@@ -1,4 +1,5 @@
 using System;
+using System.Diagnostics;
 using System.Runtime.InteropServices;
 using System.Runtime.InteropServices.ComTypes;
 using System.Threading;
@@ -17,6 +18,20 @@ internal static class SelectionReader
     internal static IntPtr ProtectedWindow { get; private set; }
     internal static string ProbeState { get; private set; } = "idle";
     internal sealed record Selection(string Text, Native.Rect? Bounds, bool UsedClipboard);
+
+    // Discord's accessibility ranges can include unselected timestamps and reaction/action labels.
+    // Only an explicit translation action may copy; never scrub words from a user's selection.
+    internal static bool PreferClipboard(IntPtr window)
+    {
+        Native.GetWindowThreadProcessId(window, out uint pid);
+        if (pid == 0) return false;
+        try
+        {
+            using var process = Process.GetProcessById((int)pid);
+            return process.ProcessName.ToLowerInvariant() is "discord" or "discordptb" or "discordcanary" or "discorddevelopment";
+        }
+        catch (Exception ex) when (ex is ArgumentException or InvalidOperationException or System.ComponentModel.Win32Exception) { return false; }
+    }
 
     public static async Task WaitForReleaseAsync(CancellationToken ct)
     {
@@ -96,7 +111,7 @@ internal static class SelectionReader
         if (Native.GetForegroundWindow() != foreground) throw new InvalidOperationException("目标窗口已切换，请重新选中文字。");
         var selection = await TryDirectAsync(foreground, ct);
         if (ProtectedWindow == foreground) throw new InvalidOperationException("密码输入区域不执行取词。");
-        return selection ?? new Selection(await ReadAsync(foreground, waitMs, ct), null, true);
+        return selection != null && !PreferClipboard(foreground) ? selection : new Selection(await ReadAsync(foreground, waitMs, ct), null, true);
     }
 
     public static async Task<string> ReadAsync(IntPtr foreground, int waitMs, CancellationToken ct)
@@ -111,6 +126,7 @@ internal static class SelectionReader
             await Task.Delay(20, ct);
         }
         if (!captured) throw new InvalidOperationException("剪贴板正在被占用，未执行复制；请稍后重试。");
+        using var nativeSnapshot = ClipboardSnapshot.Capture();
         uint before = Native.GetClipboardSequenceNumber();
         uint copied = before;
         Native.GetWindowThreadProcessId(foreground, out uint sourceProcess);
@@ -144,41 +160,49 @@ internal static class SelectionReader
         }
         finally
         {
-            // Include changes made before cancellation, including a copy delivered while polling.
-            if (copied == before)
+            try
             {
-                uint latest = Native.GetClipboardSequenceNumber();
-                Native.GetWindowThreadProcessId(Native.GetClipboardOwner(), out uint ownerProcess);
-                if (ownerProcess == sourceProcess) copied = latest;
-            }
-            bool changed = copied != before;
-            bool restored = !changed;
-            if (changed && !foreignCopy)
-            {
-                for (int retry = 0; retry < 8; retry++)
+                // Include changes made before cancellation, including a copy delivered while polling.
+                if (copied == before)
                 {
-                    if (Native.GetClipboardSequenceNumber() != copied) { restored = true; break; }
-                    if (OleSetClipboard(saved) == 0)
-                    {
-                        if (saved == null) restored = true;
-                        else
-                        {
-                            uint restoring = Native.GetClipboardSequenceNumber();
-                            for (int flush = 0; flush < 6; flush++)
-                            {
-                                if (Native.GetClipboardSequenceNumber() != restoring) { restored = true; break; }
-                                if (OleFlushClipboard() == 0) { restored = true; break; }
-                                await Task.Delay(15);
-                            }
-                        }
-                        break;
-                    }
-                    // Keep this short and non-cancellable so a canceled request still restores the clipboard.
-                    await Task.Delay(15);
+                    uint latest = Native.GetClipboardSequenceNumber();
+                    Native.GetWindowThreadProcessId(Native.GetClipboardOwner(), out uint ownerProcess);
+                    if (ownerProcess == sourceProcess) copied = latest;
                 }
+                bool changed = copied != before;
+                bool restored = !changed;
+                if (changed && !foreignCopy)
+                {
+                    for (int retry = 0; retry < 8; retry++)
+                    {
+                        if (Native.GetClipboardSequenceNumber() != copied) { restored = true; break; }
+                        if (nativeSnapshot != null)
+                        {
+                            if (nativeSnapshot.Restore(copied)) { restored = true; break; }
+                            await Task.Delay(15); continue;
+                        }
+                        if (OleSetClipboard(saved) == 0)
+                        {
+                            if (saved == null) restored = true;
+                            else
+                            {
+                                uint restoring = Native.GetClipboardSequenceNumber();
+                                for (int flush = 0; flush < 6; flush++)
+                                {
+                                    if (Native.GetClipboardSequenceNumber() != restoring) { restored = true; break; }
+                                    if (OleFlushClipboard() == 0) { restored = true; break; }
+                                    await Task.Delay(15);
+                                }
+                            }
+                            break;
+                        }
+                        // Keep this short and non-cancellable so a canceled request still restores the clipboard.
+                        await Task.Delay(15);
+                    }
+                }
+                if (!restored && !foreignCopy) throw new InvalidOperationException("原剪贴板未能完整恢复（被占用或存在延迟格式），请检查剪贴板后重试。");
             }
-            if (saved != null && Marshal.IsComObject(saved)) Marshal.ReleaseComObject(saved);
-            if (!restored && !foreignCopy) throw new InvalidOperationException("原剪贴板未能完整恢复（被占用或存在延迟格式），请检查剪贴板后重试。");
+            finally { if (saved != null && Marshal.IsComObject(saved)) Marshal.ReleaseComObject(saved); }
         }
     }
 }

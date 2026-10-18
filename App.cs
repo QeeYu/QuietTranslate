@@ -170,7 +170,7 @@ public sealed partial class App : Application
             }
             else
             {
-                if (snapshot != null) source = snapshot;
+                if (snapshot != null && !SelectionReader.PreferClipboard(foreground)) source = snapshot;
                 else { var selected = await SelectionReader.GetAsync(foreground, settings.CopyWaitMs, ct); if (selected.Bounds.HasValue) anchor = selected.Bounds.Value; source = selected.Text; }
                 ct.ThrowIfCancellationRequested(); view = ShowBubble(anchor, foreground, owner);
             }
