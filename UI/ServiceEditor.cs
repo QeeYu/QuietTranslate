@@ -15,6 +15,7 @@ internal sealed class ServiceEditor : StackPanel
     private readonly bool ocr;
     private readonly Dictionary<string, string> pending;
     private readonly ComboBox choice = new(), profiles = new();
+    private readonly ComboBox visionThinking = new() { Name = "OcrThinking", ItemsSource = new[] { "遵循模型默认（兼容优先）", "关闭思考 · 智谱 / 豆包兼容", "关闭思考 · 通义兼容", "关闭思考 · 本地服务兼容" } };
     private readonly TextBox endpoint = Field(), model = Field(), appId = Field(), region = Field(), prompt = Multi(), body = Multi(), path = Field(), header = Field(), prefix = Field(), profileName = Field();
     private readonly PasswordBox key = new();
     private readonly TextBlock keyStatus = new() { Name = "ServiceKeyStatus", TextWrapping = TextWrapping.Wrap, FontSize = 12 };
@@ -65,11 +66,16 @@ internal sealed class ServiceEditor : StackPanel
         forget.Name = ocr ? "ForgetOcrKey" : "ForgetServiceKey";
         forget.Click += (_, _) => { Commit(); pending[Target()] = ""; if (NeedsIdentity) { pending[Target() + "/id"] = ""; Config.AppId = ""; appId.Clear(); } key.Clear(); RefreshCredentialStatus(); note.Text = "保存并应用后删除密钥及相关应用标识。"; }; Children.Add(forget);
         if (!ocr) { aiArea.Children.Add(thinking); aiArea.Children.Add(word); }
+        else
+        {
+            Add(aiArea, "思考模式", visionThinking);
+            aiArea.Children.Add(Ui.Hint("默认不发送思考参数。关闭时请按当前接口文档选兼容格式；中转服务须支持透传，纯思考模型可能无法关闭。不确定时保留默认；请求失败不自动重发。"));
+        }
         Add(aiArea, ocr ? "识别提示词 · 提取原文后再交给翻译服务" : "翻译提示词 · {source_language} / {target_language}", prompt);
         var presets = new WrapPanel();
         foreach (var pair in ocr ? new[] { ("恢复识别提示词", ServiceSettings.DefaultOcrPrompt) } : new[] { ("恢复默认", ServiceSettings.DefaultPrompt), ("仅翻译 · 同语种保留", ServiceSettings.TranslationOnlyPrompt), ("Discord 聊天", ServiceSettings.DefaultPrompt + " 保留聊天语气、缩写、表情、用户提及和频道名称，避免过度书面化。"), ("日文游戏", ServiceSettings.DefaultPrompt + " 注意游戏术语、人物称谓与日语省略。无法确定的专有名词保留原文，不添加剧情。") })
         { var p = pair; var button = new Button { Content = p.Item1, Margin = new Thickness(0, 0, 8, 0) }; button.Click += (_, _) => prompt.Text = p.Item2; presets.Children.Add(button); }
-        aiArea.Children.Add(presets); promptOptions.Header = ocr ? "AI 识别提示词" : "AI 提示词与参数"; promptOptions.Name = ocr ? "OcrPromptOptions" : "ServicePromptOptions"; promptOptions.Content = aiArea; Children.Add(promptOptions);
+        aiArea.Children.Add(presets); promptOptions.Header = ocr ? "AI 识别提示词与参数" : "AI 提示词与参数"; promptOptions.Name = ocr ? "OcrPromptOptions" : "ServicePromptOptions"; promptOptions.Content = aiArea; Children.Add(promptOptions);
         header.Name = ocr ? "OcrKeyHeader" : "ServiceKeyHeader"; prefix.Name = ocr ? "OcrKeyPrefix" : "ServiceKeyPrefix"; body.Name = ocr ? "OcrBodyTemplate" : "ServiceBodyTemplate";
         Add(customArea, "密钥请求头（如 Authorization；仅在模板传密钥时可留空）", header); Add(customArea, "密钥前缀（Bearer 后需一个空格；无需前缀可留空）", prefix);
         templateArea.Children.Add(form);
@@ -112,6 +118,7 @@ internal sealed class ServiceEditor : StackPanel
         if (NeedsIdentity && !s.Endpoint.Equals(endpoint.Text.Trim(), StringComparison.OrdinalIgnoreCase) && appId.Text == loadedIdentity) appId.Clear();
         s.Endpoint = endpoint.Text.Trim(); s.Model = model.Text.Trim(); s.AppId = appId.Text.Trim(); s.Region = region.Text.Trim(); s.DisableThinking = thinking.IsChecked == true; s.WordMeanings = word.IsChecked == true; s.AllowAnonymous = anonymous.IsChecked == true;
         s.Prompt = prompt.Text; s.BodyTemplate = body.Text; s.ResponsePath = path.Text.Trim(); s.KeyHeader = header.Text.Trim(); s.KeyPrefix = prefix.Text; s.FormEncoded = form.IsChecked == true;
+        if (ocr) s.VisionThinking = (VisionThinkingMode)Math.Max(0, visionThinking.SelectedIndex);
         if (key.Password.Length > 0) { if (!string.IsNullOrWhiteSpace(key.Password)) pending[Target()] = key.Password.Trim(); key.Clear(); }
         if (NeedsIdentity) pending[Target() + "/id"] = s.AppId;
         if (ocr) draft.OcrProvider = OcrProvider; else draft.Provider = Provider;
@@ -155,6 +162,7 @@ internal sealed class ServiceEditor : StackPanel
         if (NeedsIdentity && s.AppId.Length == 0) s.AppId = pending.TryGetValue(Target() + "/id", out var identity) ? identity : Credentials.Get(Target() + "/id");
         endpoint.Text = s.Endpoint; model.Text = s.Model; appId.Text = s.AppId; region.Text = s.Region; key.Clear(); thinking.IsChecked = s.DisableThinking; word.IsChecked = s.WordMeanings; anonymous.IsChecked = s.AllowAnonymous;
         loadedIdentity = s.AppId;
+        if (ocr) visionThinking.SelectedIndex = Enum.IsDefined(s.VisionThinking) ? (int)s.VisionThinking : 0;
         prompt.Text = ocr && OcrProvider == OcrProvider.VisionAI ? OcrService.RecognitionPrompt(s) : s.Prompt; body.Text = s.BodyTemplate; path.Text = s.ResponsePath; header.Text = s.KeyHeader; prefix.Text = s.KeyPrefix; form.IsChecked = s.FormEncoded;
         bool ai = (!ocr && Settings.IsAI(Provider)) || (ocr && OcrProvider == OcrProvider.VisionAI), custom = (!ocr && Provider == Provider.CustomTranslation) || (ocr && OcrProvider == OcrProvider.Custom);
         modelArea.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;

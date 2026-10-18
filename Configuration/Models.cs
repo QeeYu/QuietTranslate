@@ -4,6 +4,7 @@ public enum Provider { OpenAI, Microsoft, DeepL, Google, Baidu, Tencent, Youdao,
 public enum OcrProvider { Windows, OCRSpace, Tencent, Baidu, GoogleVision, VisionAI, Custom, Local }
 public enum AppMode { Normal, HotkeysOnly, Paused, Compatibility }
 public enum ThemeMode { System, Light, Dark }
+public enum VisionThinkingMode { Default, ThinkingTypeDisabled, EnableThinkingFalse, ChatTemplateDisabled }
 public sealed class AppRule { public string ProcessName { get; set; } = ""; public AppMode Mode { get; set; } public string SourceLanguage { get; set; } = "auto"; }
 public sealed class ServiceProfile { public Provider Provider { get; set; } public ServiceSettings Settings { get; set; } = new(); }
 
@@ -13,6 +14,7 @@ public sealed class ServiceSettings
     public string Model { get; set; } = "deepseek-flash";
     public string Region { get; set; } = "";
     public bool DisableThinking { get; set; } = true;
+    public VisionThinkingMode VisionThinking { get; set; } = VisionThinkingMode.Default;
     [System.Text.Json.Serialization.JsonIgnore]
     public string AppId { get; set; } = ""; // Identifiers (including Baidu API Key) also live in Credential Manager.
     public string CredentialId { get; set; } = "";

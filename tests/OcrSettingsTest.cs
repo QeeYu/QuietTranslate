@@ -27,6 +27,8 @@ internal static class OcrSettingsTest
     private sealed class Handler : HttpMessageHandler
     {
         internal string ExpectedPrompt = "";
+        internal VisionThinkingMode ExpectedThinking;
+        internal bool Reject;
         internal int Calls;
         protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken ct)
         {
@@ -36,8 +38,14 @@ internal static class OcrSettingsTest
             Check(root.GetProperty("messages")[0].GetProperty("content").GetString() == ExpectedPrompt, "Edited OCR prompt not sent");
             Check(root.GetProperty("model").GetString() == "synthetic-vision" && !root.GetProperty("stream").GetBoolean(), "Vision parameters changed");
             Check(root.GetProperty("messages")[1].GetProperty("content")[1].GetProperty("image_url").GetProperty("url").GetString()!.StartsWith("data:image/png;base64,"), "Image missing");
-            Check(!root.TryGetProperty("thinking", out _) && !root.TryGetProperty("enable_thinking", out _), "Unsupported parameters sent");
-            Calls++; return new(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"Synthetic OCR 日本語\"}}]}", Encoding.UTF8, "application/json") };
+            bool thinking = root.TryGetProperty("thinking", out var type), enable = root.TryGetProperty("enable_thinking", out var flag), template = root.TryGetProperty("chat_template_kwargs", out var kwargs);
+            Check(thinking == (ExpectedThinking == VisionThinkingMode.ThinkingTypeDisabled) && enable == (ExpectedThinking == VisionThinkingMode.EnableThinkingFalse) && template == (ExpectedThinking == VisionThinkingMode.ChatTemplateDisabled), "Thinking format leaks into another mode");
+            if (thinking) Check(type.GetProperty("type").GetString() == "disabled", "Thinking was enabled");
+            if (enable) Check(flag.ValueKind == JsonValueKind.False, "Wrong enable_thinking type");
+            if (template) Check(kwargs.GetProperty("enable_thinking").ValueKind == JsonValueKind.False, "Wrong chat template flag");
+            Calls++;
+            if (Reject) return new(HttpStatusCode.BadRequest) { Content = new StringContent("{\"error\":{\"message\":\"synthetic unsupported parameter\"}}", Encoding.UTF8, "application/json") };
+            return new(HttpStatusCode.OK) { Content = new StringContent("{\"choices\":[{\"message\":{\"content\":\"Synthetic OCR 日本語\"}}]}", Encoding.UTF8, "application/json") };
         }
     }
     internal static async Task<int> RunAsync(string output)
@@ -65,6 +73,9 @@ internal static class OcrSettingsTest
                 Check(prompts.IsVisible && prompt.IsVisible && prompt.ActualHeight >= 80 && prompt.Text == ServiceSettings.DefaultOcrPrompt, "AI OCR prompt is empty or hidden");
                 Check(custom.IsVisible && header.IsVisible && prefix.IsVisible && header.Text == "Authorization" && prefix.Text == "Bearer ", "AI OCR authentication is empty");
                 Check(!Find<TextBox>(editor, "OcrBodyTemplate").IsVisible, "Unused AI JSON template shown");
+                var mode = Find<ComboBox>(editor, "OcrThinking");
+                Check(mode.IsVisible && mode.SelectedIndex == 0 && mode.Items.Count == 4, "Thinking defaults changed or control hidden");
+                mode.SelectedIndex = (int)VisionThinkingMode.EnableThinkingFalse;
                 prompt.Text = "合成自定义识别指令，保留换行，只输出原文。";
                 var choice = Find<ComboBox>(editor, "OcrChoice"); choice.SelectedIndex = (int)OcrProvider.Windows;
                 Check(prompts.Visibility == Visibility.Collapsed && custom.Visibility == Visibility.Collapsed, "Empty expanders remain for local OCR");
@@ -75,6 +86,7 @@ internal static class OcrSettingsTest
                 choice.SelectedIndex = (int)OcrProvider.VisionAI; editor.Commit(); window.UpdateLayout();
                 var restored = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!;
                 Check(prompt.Text == restored.OcrServices[OcrProvider.VisionAI].Prompt && prompt.Text.StartsWith("合成"), "Prompt lost on switch or save/reload");
+                Check(mode.SelectedIndex == (int)VisionThinkingMode.EnableThinkingFalse && restored.OcrServices[OcrProvider.VisionAI].VisionThinking == VisionThinkingMode.EnableThinkingFalse, "Thinking selection lost on switch or save/reload");
                 var image = new RenderTargetBitmap((int)window.ActualWidth, (int)window.ActualHeight, 96, 96, PixelFormats.Pbgra32); image.Render(window);
                 var png = new PngBitmapEncoder(); png.Frames.Add(BitmapFrame.Create(image));
                 using var file = File.Create(Path.Combine(output, dark ? "ocr-dark.png" : "ocr-light.png")); png.Save(file);
@@ -100,6 +112,22 @@ internal static class OcrSettingsTest
                 Check(await service.RecognizeAsync(OcrProvider.VisionAI, config, "synthetic-key", image, CancellationToken.None) == "Synthetic OCR 日本語", "Recognition text changed");
             }
             Check(handler.Calls == 3, "Unexpected request count");
+        });
+        await Test("Thinking modes send one explicit format and preserve old defaults", async () =>
+        {
+            Check(JsonSerializer.Deserialize<ServiceSettings>("{}")!.VisionThinking == VisionThinkingMode.Default, "Old configs enable thinking parameters");
+            var handler = new Handler { ExpectedPrompt = ServiceSettings.DefaultOcrPrompt }; using var service = new OcrService(handler); using var image = new System.Drawing.Bitmap(32, 32);
+            var config = new ServiceSettings { Endpoint = "https://ocr.example.invalid/v1", Model = "synthetic-vision", KeyHeader = "X-Synthetic-Key", KeyPrefix = "Test " };
+            foreach (var mode in new[] { VisionThinkingMode.Default, VisionThinkingMode.ThinkingTypeDisabled, VisionThinkingMode.EnableThinkingFalse, VisionThinkingMode.ChatTemplateDisabled, (VisionThinkingMode)999 })
+            {
+                config.VisionThinking = mode; handler.ExpectedThinking = Enum.IsDefined(mode) ? mode : VisionThinkingMode.Default;
+                Check(await service.RecognizeAsync(OcrProvider.VisionAI, config, "synthetic-key", image, CancellationToken.None) == "Synthetic OCR 日本語", "Thinking option changed OCR output");
+            }
+            handler.Reject = true; handler.ExpectedThinking = config.VisionThinking = VisionThinkingMode.ThinkingTypeDisabled;
+            int before = handler.Calls; bool rejected = false;
+            try { await service.RecognizeAsync(OcrProvider.VisionAI, config, "synthetic-key", image, CancellationToken.None); }
+            catch (ServiceException) { rejected = true; }
+            Check(rejected && handler.Calls == before + 1 && config.VisionThinking == VisionThinkingMode.ThinkingTypeDisabled, "Rejected parameters were silently retried or configuration changed");
         });
         await File.WriteAllTextAsync(Path.Combine(output, "ocr-settings.json"), JsonSerializer.Serialize(new { passed = results.Count - failed, failed, tests = results, realCloudCalls = false }, new JsonSerializerOptions { WriteIndented = true }));
         return failed == 0 ? 0 : 1;

@@ -1,5 +1,6 @@
 ﻿using System;
 using System.Drawing;
+using System.Collections.Generic;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Linq;
@@ -65,7 +66,15 @@ internal sealed class OcrService : IDisposable
                 case OcrProvider.VisionAI:
                     if (s.Model.Length == 0) throw new InvalidOperationException("请填写支持图片输入的模型名，纯文字模型不能用于 OCR。");
                     ApiSupport.Authenticate(request, s, key);
-                    request.Content = ApiSupport.Json(new { model = s.Model, stream = false, messages = new object[] { new { role = "system", content = RecognitionPrompt(s) }, new { role = "user", content = new object[] { new { type = "text", text = "识别图片文字。" }, new { type = "image_url", image_url = new { url = "data:image/png;base64," + base64 } } } } } }); break;
+                    var visionBody = new Dictionary<string, object> { ["model"] = s.Model, ["stream"] = false, ["messages"] = new object[] { new { role = "system", content = RecognitionPrompt(s) }, new { role = "user", content = new object[] { new { type = "text", text = "识别图片文字。" }, new { type = "image_url", image_url = new { url = "data:image/png;base64," + base64 } } } } } };
+                    // Explicit opt-in formats: unknown/default values send no vendor-specific fields.
+                    switch (s.VisionThinking)
+                    {
+                        case VisionThinkingMode.ThinkingTypeDisabled: visionBody["thinking"] = new { type = "disabled" }; break;
+                        case VisionThinkingMode.EnableThinkingFalse: visionBody["enable_thinking"] = false; break;
+                        case VisionThinkingMode.ChatTemplateDisabled: visionBody["chat_template_kwargs"] = new { enable_thinking = false }; break;
+                    }
+                    request.Content = ApiSupport.Json(visionBody); break;
                 default:
                     ApiSupport.Authenticate(request, s, key);
                     request.Content = ApiSupport.Template(s, new() { ["{image_base64}"] = base64, ["{image_data_url}"] = "data:image/png;base64," + base64, ["{api_key}"] = key, ["{language}"] = language }); break;
