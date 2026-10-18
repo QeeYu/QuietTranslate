@@ -20,7 +20,8 @@ internal sealed class ServiceEditor : StackPanel
     private readonly TextBlock keyStatus = new() { Name = "ServiceKeyStatus", TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly Border keyBadge = new() { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, -5, 0, 12) };
     private readonly CheckBox thinking = new() { Content = "使用此平台的关闭思考参数（仅支持的平台生效）" }, word = new() { Content = "孤立单词显示少量常见释义（通用 AI）" }, anonymous = new() { Content = "此服务无需密钥（如本机服务）" }, form = new() { Content = "使用表单编码（默认 POST JSON）" };
-    private readonly StackPanel modelArea = new(), idArea = new(), regionArea = new(), aiArea = new(), customArea = new();
+    private readonly StackPanel modelArea = new(), idArea = new(), regionArea = new(), aiArea = new(), customArea = new(), templateArea = new();
+    private readonly Expander promptOptions = new(), customOptions = new();
     private readonly TextBlock note = Ui.Hint("");
     private int editing;
     private bool loading;
@@ -63,16 +64,19 @@ internal sealed class ServiceEditor : StackPanel
         var forget = new Button { Content = "删除此地址的密钥", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 8) };
         forget.Name = ocr ? "ForgetOcrKey" : "ForgetServiceKey";
         forget.Click += (_, _) => { Commit(); pending[Target()] = ""; if (NeedsIdentity) { pending[Target() + "/id"] = ""; Config.AppId = ""; appId.Clear(); } key.Clear(); RefreshCredentialStatus(); note.Text = "保存并应用后删除密钥及相关应用标识。"; }; Children.Add(forget);
-        aiArea.Children.Add(thinking); aiArea.Children.Add(word); Add(aiArea, "翻译提示词 · {source_language} / {target_language}", prompt);
+        if (!ocr) { aiArea.Children.Add(thinking); aiArea.Children.Add(word); }
+        Add(aiArea, ocr ? "识别提示词 · 提取原文后再交给翻译服务" : "翻译提示词 · {source_language} / {target_language}", prompt);
         var presets = new WrapPanel();
-        foreach (var pair in new[] { ("恢复默认", ServiceSettings.DefaultPrompt), ("仅翻译 · 同语种保留", ServiceSettings.TranslationOnlyPrompt), ("Discord 聊天", ServiceSettings.DefaultPrompt + " 保留聊天语气、缩写、表情、用户提及和频道名称，避免过度书面化。"), ("日文游戏", ServiceSettings.DefaultPrompt + " 注意游戏术语、人物称谓与日语省略。无法确定的专有名词保留原文，不添加剧情。") })
+        foreach (var pair in ocr ? new[] { ("恢复识别提示词", ServiceSettings.DefaultOcrPrompt) } : new[] { ("恢复默认", ServiceSettings.DefaultPrompt), ("仅翻译 · 同语种保留", ServiceSettings.TranslationOnlyPrompt), ("Discord 聊天", ServiceSettings.DefaultPrompt + " 保留聊天语气、缩写、表情、用户提及和频道名称，避免过度书面化。"), ("日文游戏", ServiceSettings.DefaultPrompt + " 注意游戏术语、人物称谓与日语省略。无法确定的专有名词保留原文，不添加剧情。") })
         { var p = pair; var button = new Button { Content = p.Item1, Margin = new Thickness(0, 0, 8, 0) }; button.Click += (_, _) => prompt.Text = p.Item2; presets.Children.Add(button); }
-        aiArea.Children.Add(presets); Children.Add(new Expander { Header = "AI 提示词与参数", Name = ocr ? "OcrPromptOptions" : "ServicePromptOptions", Content = aiArea, IsExpanded = false });
-        Add(customArea, "密钥请求头（如 Authorization；仅在模板传密钥时可留空）", header); Add(customArea, "密钥前缀（Bearer 后需一个空格；无需前缀可留空）", prefix); customArea.Children.Add(form);
-        Add(customArea, ocr ? "POST 模板 · {image_base64} / {image_data_url} / {api_key}" : "POST 模板 · {text} / {source} / {target} / {api_key}", body);
-        Add(customArea, "译文／文字 JSON 路径 · 如 data.text 或 results[].text", path);
-        customArea.Children.Add(Ui.Hint("模板是 JSON；占位符只放在字符串值中，程序负责转义。自定义接口支持 POST JSON / 表单及单个密钥请求头，不运行脚本。"));
-        Children.Add(new Expander { Header = "自定义接口与鉴权", Content = customArea });
+        aiArea.Children.Add(presets); promptOptions.Header = ocr ? "AI 识别提示词" : "AI 提示词与参数"; promptOptions.Name = ocr ? "OcrPromptOptions" : "ServicePromptOptions"; promptOptions.Content = aiArea; Children.Add(promptOptions);
+        header.Name = ocr ? "OcrKeyHeader" : "ServiceKeyHeader"; prefix.Name = ocr ? "OcrKeyPrefix" : "ServiceKeyPrefix"; body.Name = ocr ? "OcrBodyTemplate" : "ServiceBodyTemplate";
+        Add(customArea, "密钥请求头（如 Authorization；仅在模板传密钥时可留空）", header); Add(customArea, "密钥前缀（Bearer 后需一个空格；无需前缀可留空）", prefix);
+        templateArea.Children.Add(form);
+        Add(templateArea, ocr ? "POST 模板 · {image_base64} / {image_data_url} / {api_key}" : "POST 模板 · {text} / {source} / {target} / {api_key}", body);
+        Add(templateArea, "译文／文字 JSON 路径 · 如 data.text 或 results[].text", path);
+        templateArea.Children.Add(Ui.Hint("模板是 JSON；占位符只放在字符串值中，程序负责转义。自定义接口支持 POST JSON / 表单及单个密钥请求头，不运行脚本。")); customArea.Children.Add(templateArea);
+        customOptions.Header = "自定义接口与鉴权"; customOptions.Name = ocr ? "OcrCustomOptions" : "ServiceCustomOptions"; customOptions.Content = customArea; Children.Add(customOptions);
         if (!ocr)
         {
             var saved = new StackPanel(); Add(saved, "命名配置 · 可保存多个自定义服务", profiles); Add(saved, "新配置名称", profileName);
@@ -151,11 +155,12 @@ internal sealed class ServiceEditor : StackPanel
         if (NeedsIdentity && s.AppId.Length == 0) s.AppId = pending.TryGetValue(Target() + "/id", out var identity) ? identity : Credentials.Get(Target() + "/id");
         endpoint.Text = s.Endpoint; model.Text = s.Model; appId.Text = s.AppId; region.Text = s.Region; key.Clear(); thinking.IsChecked = s.DisableThinking; word.IsChecked = s.WordMeanings; anonymous.IsChecked = s.AllowAnonymous;
         loadedIdentity = s.AppId;
-        prompt.Text = s.Prompt; body.Text = s.BodyTemplate; path.Text = s.ResponsePath; header.Text = s.KeyHeader; prefix.Text = s.KeyPrefix; form.IsChecked = s.FormEncoded;
-        bool ai = !ocr && Settings.IsAI(Provider), custom = (!ocr && Provider == Provider.CustomTranslation) || (ocr && OcrProvider == OcrProvider.Custom);
-        modelArea.Visibility = ai || (ocr && OcrProvider == OcrProvider.VisionAI) ? Visibility.Visible : Visibility.Collapsed;
-        aiArea.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
-        customArea.Visibility = custom || ai || (ocr && OcrProvider == OcrProvider.VisionAI) ? Visibility.Visible : Visibility.Collapsed;
+        prompt.Text = ocr && OcrProvider == OcrProvider.VisionAI ? OcrService.RecognitionPrompt(s) : s.Prompt; body.Text = s.BodyTemplate; path.Text = s.ResponsePath; header.Text = s.KeyHeader; prefix.Text = s.KeyPrefix; form.IsChecked = s.FormEncoded;
+        bool ai = (!ocr && Settings.IsAI(Provider)) || (ocr && OcrProvider == OcrProvider.VisionAI), custom = (!ocr && Provider == Provider.CustomTranslation) || (ocr && OcrProvider == OcrProvider.Custom);
+        modelArea.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
+        promptOptions.Visibility = ai ? Visibility.Visible : Visibility.Collapsed;
+        customOptions.Visibility = custom || ai ? Visibility.Visible : Visibility.Collapsed;
+        templateArea.Visibility = custom ? Visibility.Visible : Visibility.Collapsed;
         idArea.Visibility = (!ocr && Provider is Provider.Baidu or Provider.Tencent or Provider.Youdao) || (ocr && OcrProvider is OcrProvider.Tencent or OcrProvider.Baidu) ? Visibility.Visible : Visibility.Collapsed;
         regionArea.Visibility = (!ocr && Provider is Provider.Microsoft or Provider.Tencent) || (ocr && OcrProvider == OcrProvider.Tencent) ? Visibility.Visible : Visibility.Collapsed;
         endpoint.IsEnabled = key.IsEnabled = anonymous.IsEnabled = !(ocr && OcrProvider == OcrProvider.Windows);

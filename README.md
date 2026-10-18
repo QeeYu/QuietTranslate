@@ -6,7 +6,7 @@
 
 Windows 上的轻量翻译工具：划词、截图 OCR、输入翻译；可接 AI 或普通翻译接口，无翻译历史记录。
 
-当前版本为 **1.5.11**，修复 Discord 桌面客户端取词混入未选中内容及快速跨段划词漏出按钮的问题。
+当前版本为 **1.5.12**，修复 AI OCR 设置空栏，支持编辑并保存实际使用的识别提示词。
 
 [**下载 Windows 轻量版**](https://github.com/QeeYu/QuietTranslate/releases/latest) · [完整使用说明](docs/使用说明.md) · [更新说明](更新说明.md) · [本机 OCR 教程](local-ocr/本机OCR教程.md)
 

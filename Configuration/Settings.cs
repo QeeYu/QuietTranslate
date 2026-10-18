@@ -98,7 +98,7 @@ public sealed class Settings
         foreach (OcrProvider p in Enum.GetValues<OcrProvider>()) result[p] = new ServiceSettings { DisableThinking = false, Model = "", Endpoint = p switch {
             OcrProvider.OCRSpace => "https://api.ocr.space/parse/image", OcrProvider.Tencent => "https://ocr.tencentcloudapi.com",
             OcrProvider.Baidu => "https://aip.baidubce.com/rest/2.0/ocr/v1/accurate_basic", OcrProvider.GoogleVision => "https://vision.googleapis.com/v1/images:annotate", OcrProvider.Local => "http://127.0.0.1:17321/ocr", _ => "http://localhost:8000/v1" },
-            AllowAnonymous = p == OcrProvider.Local, Region = p == OcrProvider.Tencent ? "ap-guangzhou" : "", BodyTemplate = "{\"image\":\"{image_base64}\",\"language\":\"auto\"}", ResponsePath = "text" };
+            AllowAnonymous = p == OcrProvider.Local, Region = p == OcrProvider.Tencent ? "ap-guangzhou" : "", Prompt = ServiceSettings.DefaultOcrPrompt, BodyTemplate = "{\"image\":\"{image_base64}\",\"language\":\"auto\"}", ResponsePath = "text" };
         return result;
     }
 }

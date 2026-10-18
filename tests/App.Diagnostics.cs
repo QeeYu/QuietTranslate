@@ -27,6 +27,7 @@ public sealed partial class App
         app.DispatcherUnhandledException += (_, e) => { e.Handled = true; if (app.TestException != null) app.TestException(e.Exception); else MessageBox.Show("工具遇到错误：" + e.Exception.Message, "轻译", MessageBoxButton.OK, MessageBoxImage.Warning); };
         app.Startup += async (_, _) =>
         {
+            if (args.Length > 1 && args[0] == "--ocr-settings-test") { int code = await OcrSettingsTest.RunAsync(args[1]); app.Shutdown(code); return; }
             if (args.Length > 1 && args[0] == "--discord-selection-test")
             {
                 Directory.CreateDirectory(args[1]);
