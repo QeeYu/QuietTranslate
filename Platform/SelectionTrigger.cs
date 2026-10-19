@@ -45,8 +45,11 @@ internal sealed class SelectionTrigger : IDisposable
         if (code >= 0 && message.ToInt32() is 0x100 or 0x104)
         {
             int key = Marshal.ReadInt32(data);
+            bool clipboard = (Native.Down(0x11) && key is 0x43 or 0x58 or 0x56 or 0x2D) ||
+                (Native.Down(0x10) && key is 0x2D or 0x2E);
             bool select = (Native.Down(0x10) && key is >= 0x21 and <= 0x28) || (Native.Down(0x11) && key == 0x41);
-            if (select) { var window = Native.GetForegroundWindow(); var point = Native.Cursor(); Application.Current.Dispatcher.BeginInvoke(new Action(() => Queue(window, point, true))); }
+            if (clipboard) Application.Current.Dispatcher.BeginInvoke(new Action(Hide), DispatcherPriority.Send);
+            else if (select) { var window = Native.GetForegroundWindow(); var point = Native.Cursor(); Application.Current.Dispatcher.BeginInvoke(new Action(() => Queue(window, point, true))); }
             else if (key == 0x1B || (!Native.Down(0x11) && !Native.Down(0x12) && key is >= 0x20 and <= 0x5A)) Application.Current.Dispatcher.BeginInvoke(new Action(Hide));
         }
         return Native.CallNextHookEx(keyHook, code, message, data);
@@ -198,7 +201,7 @@ internal sealed class SelectionButtonWindow : Window
             bool nearby = IsMouseOver || (p.X >= a.Left - 12 && p.X <= a.Right + 80 && p.Y >= a.Top - 28 && p.Y <= a.Bottom + 60);
             if (nearby) active = Environment.TickCount64;
             if (guessed && Environment.TickCount64 - active > Math.Clamp(s.CompatibilityTimeout, 3, 60) * 1000) { DismissReason = "compatibility timeout"; Close(); return; }
-            if (guessed || !verifySelection || checking || IsMouseOver || Environment.TickCount64 - lastCheck < 700) return;
+            if (guessed || !verifySelection || checking || IsMouseOver || Native.Down(0x11) || Native.Down(0x10) || Environment.TickCount64 - lastCheck < 700) return;
             checking = true; lastCheck = Environment.TickCount64;
             try
             {

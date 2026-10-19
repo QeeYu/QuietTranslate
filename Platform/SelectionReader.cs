@@ -61,15 +61,18 @@ internal static class SelectionReader
                 if (element != null && element.Current.ProcessId == process && element.Current.IsPassword) { ProtectedWindow = foreground; return (Selection?)null; }
                 Selection? ReadSelection(AutomationElement? candidate)
                 {
+                ct.ThrowIfCancellationRequested();
                 ProbeState = "checking text pattern";
                 if (candidate == null || candidate.Current.ProcessId != process || candidate.Current.IsPassword ||
                     !candidate.TryGetCurrentPattern(TextPattern.Pattern, out var pattern)) return null;
                 var ranges = ((TextPattern)pattern).GetSelection();
+                ct.ThrowIfCancellationRequested();
                 ProbeState = "reading selected ranges";
                 if (ranges.Length == 0) return null;
                 var selected = new System.Text.StringBuilder();
                 foreach (var range in ranges)
                 {
+                    ct.ThrowIfCancellationRequested();
                     selected.Append(range.GetText(Math.Max(1, 8001 - selected.Length)));
                     if (selected.Length >= 8001) break;
                 }
@@ -118,16 +121,32 @@ internal static class SelectionReader
     {
         await WaitForReleaseAsync(ct);
         if (Native.GetForegroundWindow() != foreground) throw new InvalidOperationException("目标窗口已切换，请重新选中文字后翻译。");
+        // Reserve the whole temporary copy/restore transaction, not only individual writes.
+        // Do not queue stale requests or hold Windows' clipboard lock while awaiting input.
+        if (!ClipboardWriter.TryAcquire()) throw new InvalidOperationException("轻译的另一个复制或取词操作尚未完成，请稍后重试。");
+        try { return await ReadClipboardAsync(foreground, waitMs, ct); }
+        finally { ClipboardWriter.Release(); }
+    }
+
+    private static async Task<string> ReadClipboardAsync(IntPtr foreground, int waitMs, CancellationToken ct)
+    {
         System.Runtime.InteropServices.ComTypes.IDataObject? saved = null;
         bool captured = false;
+        uint before = 0;
         for (int retry = 0; retry < 6; retry++)
         {
+            before = Native.GetClipboardSequenceNumber();
             if (OleGetClipboard(out saved) == 0) { captured = true; break; }
             await Task.Delay(20, ct);
         }
         if (!captured) throw new InvalidOperationException("剪贴板正在被占用，未执行复制；请稍后重试。");
         using var nativeSnapshot = ClipboardSnapshot.Capture();
-        uint before = Native.GetClipboardSequenceNumber();
+        if (Native.GetClipboardSequenceNumber() != before || Native.GetForegroundWindow() != foreground || ct.IsCancellationRequested)
+        {
+            if (saved != null && Marshal.IsComObject(saved)) Marshal.ReleaseComObject(saved);
+            ct.ThrowIfCancellationRequested();
+            throw new InvalidOperationException("窗口或剪贴板已变化，未执行复制；请重新翻译。");
+        }
         uint copied = before;
         Native.GetWindowThreadProcessId(foreground, out uint sourceProcess);
         bool foreignCopy = false;

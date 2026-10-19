@@ -204,6 +204,24 @@ internal static class DiscordSelectionTest
                             throw new Exception("Rich clipboard restoration changed text or HTML");
                     }
                     var restored = await DesktopProbe.ReadExpectedAsync(sentinel); owned = restored.sequence;
+                    if (mode == "normal")
+                    {
+                        Stage(mode + ": ordinary copy cancels probing");
+                        Native.TestChord(Hotkey.Parse("Ctrl+A"));
+                        await DesktopProbe.UntilAsync(() => trigger.VisibleButton is { IsVisible: true }, "Keyboard selection button missing");
+                        if (Native.GetClipboardSequenceNumber() != owned) throw new Exception("Background probe modified clipboard");
+                        Native.TestChord(Hotkey.Parse("Ctrl+C"));
+                        await DesktopProbe.UntilAsync(() => trigger.VisibleButton == null, "Ordinary copy left background probing active");
+                        owned = (await DesktopProbe.ReadExpectedAsync(Body)).sequence;
+                        if (!await ClipboardWriter.CopyAsync(sentinel)) throw new Exception("Synthetic reset failed");
+                        owned = Native.GetClipboardSequenceNumber();
+                        Native.TapKey(0x27); await Task.Delay(80); // Collapse selection without copying.
+                        bool emptyRejected = false;
+                        try { await SelectionReader.ReadAsync(source, 180, CancellationToken.None); }
+                        catch (InvalidOperationException) { emptyRejected = true; }
+                        if (!emptyRejected || ClipboardWriter.IsBusy) throw new Exception("Failed selection leaked its reservation");
+                        owned = (await DesktopProbe.ReadExpectedAsync(sentinel)).sequence;
+                    }
                     Stage(mode + ": passed");
                     tests.Add(new { name = mode, status = "PASS", gestures, buttonMs, originalTextPreserved = true, clipboardRestored = true, apiCalls = handler.Calls });
                 }

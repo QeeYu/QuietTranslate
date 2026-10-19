@@ -151,7 +151,7 @@ internal sealed class ManualWindow : Window
         if (copying || value.Length == 0 || closed) return;
         copying = true; int version = revision; SetStatus("正在复制" + label + "…");
         bool copied = await ClipboardWriter.CopyAsync(value); copying = false;
-        if (!closed && version == revision) SetStatus(copied ? "已复制" + label : "剪贴板被占用，请重试", copied ? "Accent" : "Warning");
+        if (!closed && version == revision) SetStatus(copied ? "已复制" + label : "未复制：剪贴板被占用或已更新，请重试", copied ? "Accent" : "Warning");
     }
     internal async Task TranslateNowAsync()
     {

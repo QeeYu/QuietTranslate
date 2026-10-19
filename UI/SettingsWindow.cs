@@ -51,7 +51,7 @@ internal sealed class SettingsWindow : Window
             if (ClipboardWriter.IsBusy) return;
             var token = lifetime.Token; string snapshot = field.SelectedText; notice.Text = "正在复制…";
             bool copied = await ClipboardWriter.CopyAsync(snapshot);
-            if (!token.IsCancellationRequested && notice.Text == "正在复制…") notice.Text = copied ? "已复制" : "剪贴板被占用，请重试";
+            if (!token.IsCancellationRequested && notice.Text == "正在复制…") notice.Text = copied ? "已复制" : "未复制：剪贴板被占用或已更新，请重试";
         });
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) }); root.ColumnDefinitions.Add(new ColumnDefinition()); Content = root;
         var sidebar = new DockPanel { Margin = new Thickness(16, 26, 16, 20) }; var sideBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) }; Ui.Bind(sideBorder, Border.BackgroundProperty, "Surface"); Ui.Bind(sideBorder, Border.BorderBrushProperty, "Line"); root.Children.Add(sideBorder);

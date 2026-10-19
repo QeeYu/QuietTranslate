@@ -6,7 +6,7 @@
 
 Windows 上的轻量翻译工具：划词、截图 OCR、输入翻译；可接 AI 或普通翻译接口，无翻译历史记录。
 
-当前版本为 **1.5.13**，AI OCR 新增关闭思考的兼容选项，默认保持模型原有行为。
+当前版本为 **1.5.14**，修复剪贴板操作竞争，普通复制时停止后台选区探测。
 
 [**下载 Windows 轻量版**](https://github.com/QeeYu/QuietTranslate/releases/latest) · [完整使用说明](docs/使用说明.md) · [更新说明](更新说明.md) · [本机 OCR 教程](local-ocr/本机OCR教程.md)
 

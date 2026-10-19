@@ -52,7 +52,7 @@ internal sealed class BubbleWindow : Window
             if (copying || pending.Length == 0) return;
             copying = true; string snapshot = pending; view!.SetCopying(true);
             bool copied = await ClipboardWriter.CopyAsync(snapshot); copying = false;
-            if (!closed) { view.SetCopying(false); if (pending == snapshot) view.Notify(copied ? "已复制" : "剪贴板被占用，请重试"); }
+            if (!closed) { view.SetCopying(false); if (pending == snapshot) view.Notify(copied ? "已复制" : "未复制：剪贴板被占用或已更新，请重试"); }
         });
         Content = view;
         view.DragHandle.MouseLeftButtonDown += (_, e) =>

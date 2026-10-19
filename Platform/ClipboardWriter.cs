@@ -10,24 +10,27 @@ internal static class ClipboardWriter
 {
     private static int busy;
     internal static bool IsBusy => Volatile.Read(ref busy) != 0;
+    internal static bool TryAcquire() => Interlocked.CompareExchange(ref busy, 1, 0) == 0;
+    internal static void Release() => Interlocked.Exchange(ref busy, 0);
     // Eager Unicode text avoids OLE's flush/marshalling path. Clipboard ownership
     // and bounded retries stay off the UI thread; no stale copy requests are queued.
     internal static Task<bool> CopyAsync(string text)
     {
-        if (text.Length == 0 || Interlocked.CompareExchange(ref busy, 1, 0) != 0) return Task.FromResult(false);
+        if (text.Length == 0 || !TryAcquire()) return Task.FromResult(false);
+        uint requestedSequence = Native.GetClipboardSequenceNumber();
         var completion = new TaskCompletionSource<bool>(TaskCreationOptions.RunContinuationsAsynchronously);
         var worker = new Thread(() =>
         {
             bool success = false;
-            try { success = WriteText(text); }
+            try { success = WriteText(text, requestedSequence); }
             catch { /* Clipboard contents and exception details are never logged. */ }
-            finally { Interlocked.Exchange(ref busy, 0); completion.TrySetResult(success); }
+            finally { Release(); completion.TrySetResult(success); }
         }) { IsBackground = true, Name = "QuietTranslate.Copy" };
         try { worker.SetApartmentState(ApartmentState.STA); worker.Start(); }
-        catch { Interlocked.Exchange(ref busy, 0); completion.TrySetResult(false); }
+        catch { Release(); completion.TrySetResult(false); }
         return completion.Task;
     }
-    private static bool WriteText(string text)
+    private static bool WriteText(string text, uint requestedSequence)
     {
         IntPtr owner = CreateWindowEx(0, "STATIC", "", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
         if (owner == IntPtr.Zero) return false;
@@ -40,7 +43,9 @@ internal static class ClipboardWriter
             IntPtr buffer = GlobalLock(memory); if (buffer == IntPtr.Zero) return false;
             try { Marshal.Copy(bytes, 0, buffer, bytes.Length); } finally { GlobalUnlock(memory); }
             for (int i = 0; i < 30 && !(open = OpenClipboard(owner)); i++) Thread.Sleep(20);
-            if (!open || !EmptyClipboard() || SetClipboardData(13, memory) == IntPtr.Zero) return false; // CF_UNICODETEXT
+            // Check under the acquired lock: a copy made while we waited always wins.
+            if (!open || Native.GetClipboardSequenceNumber() != requestedSequence ||
+                !EmptyClipboard() || SetClipboardData(13, memory) == IntPtr.Zero) return false; // CF_UNICODETEXT
             memory = IntPtr.Zero; // ownership transferred to Windows, survives the worker/window
             return true;
         }
