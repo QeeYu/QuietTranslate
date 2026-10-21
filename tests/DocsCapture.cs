@@ -18,6 +18,55 @@ namespace QuietTranslate;
 // Documentation uses real controls and a local mock response, never stored credentials.
 internal static class DocsCapture
 {
+    internal static async Task<int> SelectionAsync(string output)
+    {
+        Directory.CreateDirectory(output); var oldTheme = Ui.Theme; Ui.Theme = ThemeMode.Light;
+        var canvas = new Canvas { Width = 780, Height = 350, Background = new SolidColorBrush(Ui.Color("#F0F5F7")) };
+        var caption = new TextBlock { FontSize = 20, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(Ui.Color("#245C64")) };
+        void Place(UIElement element, double x, double y) { canvas.Children.Add(element); Canvas.SetLeft(element, x); Canvas.SetTop(element, y); }
+        Place(caption, 28, 22);
+        Place(new TextBlock { Text = "轻译 · 划词翻译", FontSize = 13, Foreground = Brushes.SlateGray }, 28, 66);
+        var source = new TextBox { Text = "The meeting starts at eight. I've sent the notes to the channel. Let me know if you need help.", Width = 340, Height = 152, FontSize = 17, TextWrapping = TextWrapping.Wrap, Padding = new Thickness(15), IsReadOnly = true, SelectionBrush = new SolidColorBrush(Ui.Color("#9DD5DD")), SelectionOpacity = .75 };
+        Place(source, 28, 101);
+        Place(new TextBlock { Text = "Ctrl + Alt + Q 也可翻译选区 · Esc 或点击气泡外关闭", FontSize = 13, Foreground = Brushes.SlateGray }, 28, 307);
+        var settings = new Settings { Theme = ThemeMode.Light, BubbleOpacity = .98 };
+        var face = SelectionButtonWindow.CreateFace(settings); face.Width = face.Height = settings.ButtonSize; face.Visibility = Visibility.Collapsed;
+        var button = new Button { Content = settings.ButtonLabel, Padding = new Thickness(0), FontSize = 15, FontWeight = FontWeights.SemiBold, Foreground = new SolidColorBrush(SelectionButtonWindow.TextColor(settings)), Background = Brushes.Transparent, BorderThickness = new Thickness(0), Focusable = false };
+        face.Child = button; Place(face, 327, 264);
+        var bubble = new BubbleView(.98, 16, "", false, () => { }, () => { }) { Width = 342, Visibility = Visibility.Collapsed };
+        bubble.ApplyAppearance(settings); Place(bubble, 408, 131);
+        var pointer = new System.Windows.Shapes.Path { Data = Geometry.Parse("M 0,0 L 0,23 L 6,17 L 12,29 L 17,26 L 11,15 L 20,15 Z"), Fill = new SolidColorBrush(Ui.Color("#247A85")), Stroke = Brushes.White, StrokeThickness = 1.5 };
+        Place(pointer, 58, 137);
+        var host = new Window { Content = canvas, SizeToContent = SizeToContent.WidthAndHeight, WindowStyle = WindowStyle.None, ShowInTaskbar = false, ResizeMode = ResizeMode.NoResize };
+        Ui.Apply(host, false); var frames = new List<object>();
+        void Frame(string title, int duration) { caption.Text = title; string file = $"selection-{frames.Count:000}.png"; Render(canvas, Path.Combine(output, file)); frames.Add(new { file, duration }); }
+        try
+        {
+            host.Show(); source.Focus(); await Task.Delay(100);
+            Frame("选中文字，译文就在旁边", 1100);
+            foreach (int count in new[] { 15, 35, 65, source.Text.Length })
+            {
+                source.Select(0, count); Canvas.SetLeft(pointer, count < 35 ? 180 : 320); Canvas.SetTop(pointer, count < 35 ? 140 : count < 65 ? 170 : 210);
+                await Task.Delay(30); Frame("① 拖选文字", 150);
+            }
+            face.Visibility = Visibility.Visible; Frame("② 松开鼠标，附近出现「译」", 950);
+            Canvas.SetLeft(pointer, 345); Canvas.SetTop(pointer, 279); Frame("③ 点击「译」，才会发送翻译请求", 650);
+            bool clicked = false; button.Click += (_, _) => clicked = true; button.RaiseEvent(new RoutedEventArgs(Button.ClickEvent));
+            if (!clicked) throw new Exception("Selection demo click was not handled");
+            face.Visibility = Visibility.Collapsed; bubble.Visibility = Visibility.Visible; bubble.Text = "正在翻译…";
+            Frame("译文气泡贴近选区，保留原应用", 450);
+            using var service = new TranslationService(new DemoHandler());
+            string translated = "";
+            await service.TranslateAsync(settings.Provider, settings.Current, "synthetic-docs-key", source.SelectedText, text => translated = text, CancellationToken.None);
+            if (translated.Length == 0) throw new Exception("Selection documentation mock returned no text");
+            bubble.Text = translated; Canvas.SetLeft(pointer, 638); Canvas.SetTop(pointer, 220);
+            Frame("④ 阅读译文，也可复制", 2200);
+            bubble.Visibility = Visibility.Collapsed; source.Select(0, 0); Frame("Esc 或点击外部，用完即走", 1100);
+            await File.WriteAllTextAsync(Path.Combine(output, "frames.json"), JsonSerializer.Serialize(new { mockService = true, realCloudCalls = false, syntheticContent = true, frames }, new JsonSerializerOptions { WriteIndented = true }));
+            return 0;
+        }
+        finally { host.Close(); Ui.Theme = oldTheme; }
+    }
     private sealed class DemoHandler : HttpMessageHandler
     {
         internal int Calls;

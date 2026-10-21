@@ -14,9 +14,14 @@ validation/
 *.user
 *.suo
 settings.json
+settings.*.json
+hosts.yml
 credentials*.json
 secrets*.json
 *.pem
 *.dmp
 .ssh/
 .aws/
+LiveHistory/
+*.qth
+cleanup.pending

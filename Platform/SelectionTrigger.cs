@@ -124,7 +124,7 @@ internal sealed class SelectionTrigger : IDisposable
             {
                 ct.ThrowIfCancellationRequested();
                 if (!Enabled || Native.GetForegroundWindow() != window) return;
-                selected = await SelectionReader.TryDirectAsync(window, ct, point);
+                selected = await SelectionReader.TryDirectAsync(window, ct, point, onlyCheckPassword: clipboardOnClick);
                 State = $"probe {attempt}: {SelectionReader.ProbeState}, selected={selected != null}";
                 if (selected != null || SelectionReader.ProtectedWindow == window) break;
                 if (!clipboardOnClick) await Task.Delay(85, ct);

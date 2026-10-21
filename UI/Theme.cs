@@ -13,7 +13,6 @@ internal static partial class Ui
     internal static bool ResolveTheme(ThemeMode mode) => mode == ThemeMode.Dark || (mode == ThemeMode.System && IsSystemDark);
     internal static bool IsDark => ResolveTheme(Theme);
     [DllImport("dwmapi.dll")] private static extern int DwmSetWindowAttribute(IntPtr hwnd, int attribute, ref int value, int size);
-    [DllImport("dwmapi.dll")] internal static extern int DwmGetWindowAttribute(IntPtr hwnd, int attribute, out int value, int size);
     internal static int ApplyCaption(Window window)
     {
         var hwnd = new WindowInteropHelper(window).Handle;

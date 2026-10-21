@@ -68,5 +68,4 @@ internal static class ScreenshotOcr
         if (japanese == null && english == null && tags.Count > 0) return await Read(tags[0]);
         return string.IsNullOrWhiteSpace(en) ? ja : en;
     }
-    internal static bool ContainsKana(string text) => text.Any(c => c is >= '\u3040' and <= '\u30ff' or >= '\uff66' and <= '\uff9f');
 }

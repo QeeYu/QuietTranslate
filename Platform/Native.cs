@@ -33,6 +33,7 @@ internal static class Native
     [DllImport("user32.dll", SetLastError = true)] private static extern uint SendInput(uint count, Input[] inputs, int size);
     [DllImport("user32.dll")] internal static extern uint GetClipboardSequenceNumber();
     [DllImport("user32.dll")] internal static extern IntPtr GetClipboardOwner();
+    [DllImport("user32.dll")] internal static extern bool IsClipboardFormatAvailable(uint format);
     [DllImport("user32.dll")] private static extern IntPtr MonitorFromPoint(Point point, uint flags);
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern bool GetMonitorInfo(IntPtr monitor, ref MonitorInfo info);
     [DllImport("user32.dll", SetLastError = true)] internal static extern IntPtr SetWindowsHookEx(int id, HookProc procedure, IntPtr module, uint thread);
@@ -120,9 +121,18 @@ internal sealed class Hotkeys : IDisposable
     {
         ApplyMap(new() { [1] = Hotkey.Parse(selection), [2] = Hotkey.Parse(screenshot) });
     }
-    internal void Apply(Settings s, bool blocked, bool manualBlocked = false) => ApplyMap(blocked
-        ? (manualBlocked ? new() { [3] = Hotkey.Parse(s.PauseHotkey) } : new() { [3] = Hotkey.Parse(s.PauseHotkey), [4] = Hotkey.Parse(s.ManualHotkey) })
-        : new() { [1] = Hotkey.Parse(s.SelectionHotkey), [2] = Hotkey.Parse(s.ScreenshotHotkey), [3] = Hotkey.Parse(s.PauseHotkey), [4] = Hotkey.Parse(s.ManualHotkey) });
+    internal bool SpeechUnavailable { get; private set; }
+    internal void Apply(Settings s, bool blocked, bool manualBlocked = false, bool speechEnabled = false)
+    {
+        ApplyMap(blocked
+            ? (manualBlocked ? new() { [3] = Hotkey.Parse(s.PauseHotkey) } : new() { [3] = Hotkey.Parse(s.PauseHotkey), [4] = Hotkey.Parse(s.ManualHotkey) })
+            : new() { [1] = Hotkey.Parse(s.SelectionHotkey), [2] = Hotkey.Parse(s.ScreenshotHotkey), [3] = Hotkey.Parse(s.PauseHotkey), [4] = Hotkey.Parse(s.ManualHotkey) });
+        SpeechUnavailable = false;
+        if (blocked && !speechEnabled) return;
+        var key = Hotkey.Parse(s.Speech.Hotkey);
+        SpeechUnavailable = !Native.RegisterHotKey(source.Handle, 5, key.Modifiers | 0x4000, key.Key);
+        if (!SpeechUnavailable) registered[5] = key;
+    }
     private void ApplyMap(System.Collections.Generic.Dictionary<int, Hotkey> next)
     {
         if (new System.Collections.Generic.HashSet<Hotkey>(next.Values).Count != next.Count) throw new ArgumentException("快捷键不能重复。");

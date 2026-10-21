@@ -20,9 +20,12 @@ internal static class TableSelectionTest
         var tests = new List<object>(); int failed = 0, calls = 0;
         var cursor = Native.Cursor(); var previous = Native.GetForegroundWindow();
         var edge = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.ProgramFilesX86), "Microsoft/Edge/Application/msedge.exe");
+        string fixtureTitle = "QuietTranslate Table " + Guid.NewGuid().ToString("N");
         string page = Path.Combine(Path.GetFullPath(output), "table.html");
         await File.WriteAllTextAsync(page, "<!doctype html><html lang=zh-CN translate=no><meta charset=utf-8><meta name=google content=notranslate><title>QuietTranslate table fixture</title><style>body{font:18px Arial;margin:24px}table{border-collapse:collapse;width:750px}td{border:1px solid #abc;padding:12px}tr{height:54px}p{height:48px}</style><p>本地合成表格，仅用于拖选测试</p><table>" + string.Concat(Enumerable.Range(1, 28).Select(i => $"<tr><td>Row {i:00}</td><td><span>Sample {i:00}: select across cells and lines safely.</span></td></tr>")) + "</table><p>Outside table region</p>");
-        using var process = Process.Start(new ProcessStartInfo(edge) { UseShellExecute = false, ArgumentList = { "--no-first-run", "--inprivate", "--new-window", "--force-renderer-accessibility", "--user-data-dir=" + Path.Combine(Path.GetFullPath(output), "profile"), new Uri(page).AbsoluteUri, "--window-size=900,780", "--window-position=30,30" } })!;
+        string html = await File.ReadAllTextAsync(page); await File.WriteAllTextAsync(page, html.Replace("QuietTranslate table fixture", fixtureTitle));
+        using var launcher = Process.Start(new ProcessStartInfo(edge) { UseShellExecute = false, ArgumentList = { "--no-first-run", "--inprivate", "--new-window", "--force-renderer-accessibility", "--user-data-dir=" + Path.Combine(Path.GetFullPath(output), "profile-" + Guid.NewGuid().ToString("N")), new Uri(page).AbsoluteUri, "--window-size=900,780", "--window-position=30,30" } })!;
+        Process? process = null;
         using var trigger = new SelectionTrigger((_, _, text) => { calls++; if (string.IsNullOrWhiteSpace(text)) throw new Exception("Empty table snapshot translated"); }, () => new Settings(), () => false);
         Window? focus = null; IntPtr source = IntPtr.Zero;
         async Task Test(string name, Func<Task> run)
@@ -36,8 +39,18 @@ internal static class TableSelectionTest
         }
         try
         {
-            for (int i = 0; i < 160; i++) { process.Refresh(); source = process.MainWindowHandle; if (source != IntPtr.Zero) break; await Task.Delay(50); }
-            if (source == IntPtr.Zero) throw new Exception("Isolated Edge fixture did not open");
+            // Edge's launcher can exit before its actual browser window appears.
+            for (int i = 0; i < 160 && process == null; i++)
+            {
+                foreach (var candidate in Process.GetProcessesByName("msedge"))
+                {
+                    try { if (process == null && candidate.MainWindowTitle.StartsWith(fixtureTitle, StringComparison.Ordinal)) { source = candidate.MainWindowHandle; process = candidate; continue; } }
+                    catch (InvalidOperationException) { }
+                    candidate.Dispose();
+                }
+                if (process == null) await Task.Delay(50);
+            }
+            if (process == null || source == IntPtr.Zero) throw new Exception("Isolated Edge fixture did not open");
             Native.SetForegroundWindow(source); await Task.Delay(800); Native.TapKey(0x1B); await Task.Delay(200);
             AutomationElement? document = null;
             for (int wait = 0; wait < 80; wait++)
@@ -125,7 +138,7 @@ internal static class TableSelectionTest
         finally
         {
             Native.mouse_event(4, 0, 0, 0, IntPtr.Zero); trigger.Enabled = false; focus?.Close();
-            if (!process.HasExited) { process.Kill(entireProcessTree: true); process.WaitForExit(); }
+            if (process != null) { if (!process.HasExited) { process.Kill(entireProcessTree: true); process.WaitForExit(); } process.Dispose(); }
             Native.SetCursorPos(cursor.X, cursor.Y); Native.SetForegroundWindow(previous);
         }
         await File.WriteAllTextAsync(Path.Combine(output, "table-tests.json"), JsonSerializer.Serialize(new { passed = tests.Count - failed, failed, tests, realCloudCalls = false }, new JsonSerializerOptions { WriteIndented = true }));

@@ -85,7 +85,7 @@ internal static class ClipboardRaceTest
                 var window = new Window { Title = "Synthetic clipboard selection", Content = field, Width = 500, Height = 180, Topmost = true };
                 try
                 {
-                    window.Show(); window.Activate(); field.Focus(); field.SelectAll(); await Task.Delay(150);
+                    window.Show(); DesktopProbe.ShowFixture(window); field.Focus(); field.SelectAll(); await Task.Delay(150);
                     IntPtr handle = new WindowInteropHelper(window).Handle;
                     if (Native.GetForegroundWindow() != handle) throw new Exception("Synthetic window did not receive focus");
                     var rich = new DataObject(); rich.SetText("Synthetic rich original"); rich.SetData(DataFormats.Html, "<b>Synthetic rich original</b>");

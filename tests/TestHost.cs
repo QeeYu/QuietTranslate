@@ -14,6 +14,10 @@ internal static class TestHost
     public static int Main(string[] args)
     {
         if (args.Length == 0) return 2;
+        // Before any window/session is constructed, isolate every production Save/Load and credential target.
+        string scope = Guid.NewGuid().ToString("N");
+        Settings.DirectoryPath = Path.Combine(Environment.CurrentDirectory, "work", "test-profiles", scope);
+        Credentials.Prefix = "QuietTranslate.Tests/" + scope + "/";
         if (args.Length == 2 && args[0] == "--clipboard-read-check")
         {
             App.EnablePointerInput();

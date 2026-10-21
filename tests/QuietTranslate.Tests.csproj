@@ -16,7 +16,8 @@
   </PropertyGroup>
   <ItemGroup>
     <!-- Compile the production sources unchanged, alongside partial App desktop fixtures. -->
-    <Compile Include="*.cs;../App.cs;../UI/**/*.cs;../Translation/**/*.cs;../OCR/**/*.cs;../Platform/**/*.cs;../Configuration/**/*.cs" />
+    <Compile Include="*.cs;../App*.cs;../UI/**/*.cs;../Translation/**/*.cs;../OCR/**/*.cs;../Platform/**/*.cs;../Configuration/**/*.cs;../Speech/**/*.cs" />
+    <PackageReference Include="NAudio.Wasapi" Version="2.2.1" />
     <Resource Include="../Assets/*.ico" Link="Assets/%(Filename)%(Extension)" />
   </ItemGroup>
 </Project>

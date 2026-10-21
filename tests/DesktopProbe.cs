@@ -21,6 +21,17 @@ internal static class DesktopProbe
     [DllImport("user32.dll", CharSet = CharSet.Unicode)] private static extern IntPtr CreateWindowEx(int exStyle, string className, string title, int style, int x, int y, int width, int height, IntPtr parent, IntPtr menu, IntPtr instance, IntPtr parameter);
     [DllImport("user32.dll")] internal static extern bool DestroyWindow(IntPtr window);
     internal static IntPtr ClipboardWindow() => CreateWindowEx(0, "STATIC", "", 0, 0, 0, 0, 0, new IntPtr(-3), IntPtr.Zero, IntPtr.Zero, IntPtr.Zero);
+    [DllImport("kernel32.dll")] private static extern uint GetCurrentThreadId();
+    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
+    [DllImport("user32.dll")] private static extern bool ShowWindow(IntPtr window, int command);
+    internal static void ShowFixture(Window window) { var handle = new WindowInteropHelper(window).Handle; ShowWindow(handle, 5); Focus(handle); }
+    internal static void Focus(IntPtr window)
+    {
+        uint current = GetCurrentThreadId(), foreground = Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out _);
+        bool attached = foreground != 0 && foreground != current && AttachThreadInput(current, foreground, true);
+        try { Native.SetForegroundWindow(window); }
+        finally { if (attached) AttachThreadInput(current, foreground, false); }
+    }
     internal static async Task UntilAsync(Func<bool> condition, string failure)
     {
         for (int wait = 0; wait < 60 && !condition(); wait++) await Task.Delay(25);

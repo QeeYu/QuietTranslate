@@ -53,7 +53,7 @@ public sealed class TranslationService : IDisposable
             {
                 ["model"] = settings.Model,
                 ["messages"] = messages,
-                ["stream"] = true, ["max_tokens"] = 4096
+                ["stream"] = true, ["max_tokens"] = Math.Clamp(settings.MaxOutputTokens, 256, 65536)
             };
             if (settings.DisableThinking)
             {

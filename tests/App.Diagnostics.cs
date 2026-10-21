@@ -27,6 +27,18 @@ public sealed partial class App
         app.DispatcherUnhandledException += (_, e) => { e.Handled = true; if (app.TestException != null) app.TestException(e.Exception); else MessageBox.Show("工具遇到错误：" + e.Exception.Message, "轻译", MessageBoxButton.OK, MessageBoxImage.Warning); };
         app.Startup += async (_, _) =>
         {
+            if (args.Length > 1 && args[0] == "--audit-regression-test") { int code = await AuditRegressionTest.RunAsync(args[1]); app.Shutdown(code); return; }
+            if (args.Length > 1 && args[0] == "--speech-app-test")
+            {
+                Directory.CreateDirectory(args[1]); int code = 0;
+                try { await app.CheckSpeechSwitchAsync(args[1]); File.WriteAllText(Path.Combine(args[1], "app-result.json"), "{\"passed\":true}"); }
+                catch (Exception ex) { code = 1; File.WriteAllText(Path.Combine(args[1], "app-result.json"), System.Text.Json.JsonSerializer.Serialize(new { passed = false, error = ex.Message })); }
+                app.Shutdown(code); return;
+            }
+            if (args.Length > 1 && args[0] == "--direct-captions-test") { int code = await DirectCaptionsTest.RunAsync(args[1]); app.Shutdown(code); return; }
+            if (args.Length > 1 && args[0] == "--speech-polish-test") { int code = await SpeechPolishTest.RunAsync(args[1]); app.Shutdown(code); return; }
+            if (args.Length > 1 && args[0] == "--speech-test") { int code = await SpeechTest.RunAsync(app, args[1]); app.Shutdown(code); return; }
+            if (args.Length > 1 && args[0] == "--speech-audio-test") { int code = await SpeechTest.RunAsync(app, args[1], audioOnly: true); app.Shutdown(code); return; }
             if (args.Length > 1 && args[0] == "--clipboard-race-test") { int code = await ClipboardRaceTest.RunAsync(args[1]); app.Shutdown(code); return; }
             if (args.Length > 1 && args[0] == "--copy-contention-test") { int code = await CopyTest.RunAsync(app, args[1], baselineOnly: true); app.Shutdown(code); return; }
             if (args.Length > 1 && args[0] == "--ocr-settings-test") { int code = await OcrSettingsTest.RunAsync(args[1]); app.Shutdown(code); return; }
@@ -51,6 +63,7 @@ public sealed partial class App
             if (args.Length > 0 && args[0] == "--scroll-selection-fixture") { InteractionTest.OpenFixture(app); return; }
             if (args.Length > 0 && args[0] == "--interaction-test") { int code = await InteractionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--motion-test") { int code = await MotionTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
+            if (args.Length > 1 && args[0] == "--selection-demo") { int code = await DocsCapture.SelectionAsync(args[1]); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--docs-capture") { int code = await DocsCapture.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--polish-test") { int code = await PolishTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }
             if (args.Length > 0 && args[0] == "--copy-test") { int code = await CopyTest.RunAsync(app, args.Length > 1 ? args[1] : Environment.CurrentDirectory); app.Shutdown(code); return; }

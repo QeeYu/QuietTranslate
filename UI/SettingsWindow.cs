@@ -13,15 +13,16 @@ using System.Windows.Media;
 
 namespace QuietTranslate;
 
-internal sealed class SettingsWindow : Window
+internal sealed partial class SettingsWindow : Window
 {
     private readonly Settings draft;
     private readonly Action<Settings> save;
     private readonly List<Action> changes = new(), lookChanges = new();
     private readonly Dictionary<string, string> pendingKeys = new();
+    internal bool CredentialChanged(string target) => pendingKeys.ContainsKey(target);
     private readonly CancellationTokenSource lifetime = new();
-    private readonly StackPanel[] pages = { new(), new(), new(), new(), new(), new() };
-    private readonly Button[] nav = new Button[6];
+    private readonly StackPanel[] pages = { new(), new(), new(), new(), new(), new(), new() };
+    private readonly Button[] nav = new Button[7];
     private readonly TextBlock title = new(), subtitle = Ui.Hint(""), notice = Ui.Hint(""), shortcutNotice = Ui.Hint("点击快捷键框后录入；Esc 取消。单键推荐 Pause，也可用 Alt+P。" );
     private readonly List<TextBox> shortcutBoxes = new();
     private readonly HashSet<Hotkey> originalHotkeys = new();
@@ -35,23 +36,41 @@ internal sealed class SettingsWindow : Window
     private Native.HookProc? keyboardProc;
     private bool recordingActive;
     internal event Action<bool>? RecordingChanged;
+    private Action? speechSaved;
 
-    public SettingsWindow(Settings settings, Action<Settings> save, bool? dark = null)
+    public SettingsWindow(Settings settings, Action<Settings> save, bool? dark = null, Action? toggleSpeech = null)
     {
         draft = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(settings))!; this.save = save; night = dark ?? Ui.ResolveTheme(draft.Theme);
-        foreach (var text in new[] { settings.SelectionHotkey, settings.ScreenshotHotkey, settings.PauseHotkey, settings.ManualHotkey }) try { originalHotkeys.Add(Hotkey.Parse(text)); } catch { }
+        foreach (var text in new[] { settings.SelectionHotkey, settings.ScreenshotHotkey, settings.PauseHotkey, settings.ManualHotkey, settings.Speech.Hotkey }) try { originalHotkeys.Add(Hotkey.Parse(text)); } catch { }
         Icon = AppIcons.Image; Title = "轻译 · 设置"; Width = 910; Height = Math.Min(800, SystemParameters.WorkArea.Height - 40); MinWidth = 760; MinHeight = 560; WindowStartupLocation = WindowStartupLocation.CenterScreen;
         FontFamily = new FontFamily("Segoe UI, Microsoft YaHei UI"); FontSize = 13; Ui.Apply(this, night); Ui.Bind(this, BackgroundProperty, "Bg"); Ui.Bind(this, ForegroundProperty, "Text");
         notice.Name = "SettingsNotice";
-        // Intercept before TextBox's class handler performs synchronous OLE copy/flush.
-        CommandManager.AddPreviewExecutedHandler(this, async (_, e) =>
+        async Task CopyField(TextBox field)
         {
-            if (e.Command != ApplicationCommands.Copy || e.OriginalSource is not TextBox field || field.SelectionLength == 0) return;
-            e.Handled = true;
             if (ClipboardWriter.IsBusy) return;
             var token = lifetime.Token; string snapshot = field.SelectedText; notice.Text = "正在复制…";
             bool copied = await ClipboardWriter.CopyAsync(snapshot);
             if (!token.IsCancellationRequested && notice.Text == "正在复制…") notice.Text = copied ? "已复制" : "未复制：剪贴板被占用或已更新，请重试";
+        }
+        CommandManager.AddPreviewCanExecuteHandler(this, (_, e) =>
+        {
+            if ((e.OriginalSource as TextBox ?? Keyboard.FocusedElement as TextBox) is not TextBox field) return;
+            if (e.Command == ApplicationCommands.Copy || e.Command == ApplicationCommands.Cut) e.CanExecute = field.SelectionLength > 0 && (e.Command == ApplicationCommands.Copy || !field.IsReadOnly);
+            else if (e.Command == ApplicationCommands.Paste) e.CanExecute = !field.IsReadOnly && Native.IsClipboardFormatAvailable(13);
+            else return;
+            e.Handled = true;
+        });
+        PreviewKeyDown += async (_, e) =>
+        {
+            if (!recordingActive && Keyboard.Modifiers == ModifierKeys.Control && e.Key == Key.C && Keyboard.FocusedElement is TextBox field && field.SelectionLength > 0)
+            { e.Handled = true; await CopyField(field); }
+        };
+        // Intercept before TextBox's class handler performs synchronous OLE copy/flush.
+        CommandManager.AddPreviewExecutedHandler(this, async (_, e) =>
+        {
+            if (e.Command != ApplicationCommands.Copy || (e.OriginalSource as TextBox ?? Keyboard.FocusedElement as TextBox) is not TextBox field || field.SelectionLength == 0) return;
+            e.Handled = true;
+            await CopyField(field);
         });
         var root = new Grid(); root.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(176) }); root.ColumnDefinitions.Add(new ColumnDefinition()); Content = root;
         var sidebar = new DockPanel { Margin = new Thickness(16, 26, 16, 20) }; var sideBorder = new Border { Child = sidebar, BorderThickness = new Thickness(0, 0, 1, 0) }; Ui.Bind(sideBorder, Border.BackgroundProperty, "Surface"); Ui.Bind(sideBorder, Border.BorderBrushProperty, "Line"); root.Children.Add(sideBorder);
@@ -64,8 +83,8 @@ internal sealed class SettingsWindow : Window
             button.Click += (_, _) => { draft.Theme = mode; night = Ui.ResolveTheme(mode); Ui.RefreshTheme(this, night); preview?.SetTheme(night); UpdatePreview(); UpdateThemeButtons(); notice.Text = "正在预览主题，点击保存并应用后全局生效。"; };
         }
         UpdateThemeButtons();
-        var privacy = Ui.Hint("轻量版 · 无历史记录\n关闭即清空翻译内容"); DockPanel.SetDock(privacy, Dock.Bottom); sidebar.Children.Add(privacy);
-        string[] names = { "划词与快捷键", "气泡与按钮", "翻译服务", "截图 OCR", "应用规则", "输入翻译栏" };
+        var privacy = Ui.Hint("轻量版 · 语音记录仅本次保留\n关闭语音功能即删除"); DockPanel.SetDock(privacy, Dock.Bottom); sidebar.Children.Add(privacy);
+        string[] names = { "划词与快捷键", "气泡与按钮", "翻译服务", "截图 OCR", "应用规则", "输入翻译栏", "实时语音字幕" };
         var navigation = new StackPanel(); sidebar.Children.Add(navigation);
         for (int i = 0; i < pages.Length; i++) { int page = i; nav[i] = new Button { Content = names[i], HorizontalContentAlignment = HorizontalAlignment.Left, BorderThickness = new Thickness(0), Padding = new Thickness(10, 12, 10, 12), Margin = new Thickness(0, 0, 0, 6), Name = i == 0 ? "SelectionTab" : i == 1 ? "AppearanceTab" : i == 2 ? "ServiceTab" : "Page" + i }; nav[i].Click += (_, _) => ShowPage(page); navigation.Children.Add(nav[i]); }
         var right = new DockPanel(); Grid.SetColumn(right, 1); root.Children.Add(right);
@@ -78,6 +97,7 @@ internal sealed class SettingsWindow : Window
         Toggle(selection, "划词后显示浮动翻译按钮", draft.SelectionButtonEnabled, v => draft.SelectionButtonEnabled = v, "SelectionButtonEnabled");
         var keys = Card(0, "全局快捷键"); Shortcut(keys, "选中文字 → 翻译", draft.SelectionHotkey, v => draft.SelectionHotkey = v, "SelectionShortcut"); Shortcut(keys, "截图 → OCR 翻译", draft.ScreenshotHotkey, v => draft.ScreenshotHotkey = v, "ScreenshotShortcut"); Shortcut(keys, "总暂停 / 恢复", draft.PauseHotkey, v => draft.PauseHotkey = v, "PauseShortcut"); Shortcut(keys, "输入翻译栏：打开 / 关闭", draft.ManualHotkey, v => draft.ManualHotkey = v, "ManualShortcut"); shortcutNotice.Name = "ShortcutNotice"; keys.Children.Add(shortcutNotice);
         Toggle(keys, "总暂停时也禁用输入翻译栏呼出键", draft.PauseManual, v => draft.PauseManual = v);
+        Shortcut(keys, "实时语音翻译功能：开 / 关（关闭即删除记录）", draft.Speech.Hotkey, v => draft.Speech.Hotkey = v, "SpeechShortcut");
         var compatibility = Card(0, "取词与消失行为"); Number(compatibility, "复制等待上限（300–2500 毫秒）", draft.CopyWaitMs, 300, 2500, v => draft.CopyWaitMs = v); Number(compatibility, "兼容模式按钮兜底时间（3–60 秒）", draft.CompatibilityTimeout, 3, 60, v => draft.CompatibilityTimeout = v);
         compatibility.Children.Add(Ui.Hint("正常选区没有固定八秒超时；悬停不消失。点击外部、Esc、切换应用、滚动或选区失效时收起。兼容模式的计时会在鼠标靠近时暂停。"));
 
@@ -123,14 +143,14 @@ internal sealed class SettingsWindow : Window
         LanguageChoice(manual, "默认源语言", draft.ManualSource, true, v => draft.ManualSource = v); LanguageChoice(manual, "默认目标语言", draft.ManualTarget, false, v => draft.ManualTarget = v); Toggle(manual, "输入翻译栏始终置顶", draft.ManualTopmost, v => draft.ManualTopmost = v);
         manual.Children.Add(Ui.Hint("中文／日文输入法确认文字后才计时。Ctrl+Enter 可立即翻译，Enter 换行。使用同一快捷键打开／关闭输入栏（默认 Alt+T，可自定义），Esc 关闭；输入法组词时先由输入法处理 Esc。点击外部不关闭；关闭会清空原文和译文。修改输入会使旧结果过期，不保存历史。"));
         var word = Card(5, "孤立单词与语种歧义"); word.Children.Add(Ui.Hint("源语言可手动指定，应用规则可预设源语种。AI 单词模式最多提供三个常见释义；普通翻译保持原服务结果，不自动改用 AI 或增加费用。气泡右上角的更多菜单可以将原文带入翻译栏编辑。"));
-        UpdatePreview(); ShowPage(0);
+        BuildSpeech(toggleSpeech); UpdatePreview(); ShowPage(0);
         apply.Click += (_, _) =>
         {
             try
             {
                 foreach (var change in changes) change(); foreach (var change in lookChanges) change(); service.Validate(); ocr.Validate(); if (!ValidateHotkeys()) return;
-                foreach (var pair in pendingKeys) Credentials.Set(pair.Key, pair.Value);
-                save(JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(draft))!); pendingKeys.Clear(); service.RefreshCredentialStatus(); ocr.RefreshCredentialStatus();
+                var value = JsonSerializer.Deserialize<Settings>(JsonSerializer.Serialize(draft))!;
+                Credentials.SaveChanges(pendingKeys, () => save(value)); pendingKeys.Clear(); service.RefreshCredentialStatus(); ocr.RefreshCredentialStatus(); speechSaved?.Invoke();
                 originalHotkeys.Clear(); foreach (var box in shortcutBoxes) originalHotkeys.Add(Hotkey.Parse(box.Text));
                 notice.Text = "已保存并立即生效。设置可以保持打开，切到其他应用即可翻译。";
             }
@@ -163,7 +183,7 @@ internal sealed class SettingsWindow : Window
     }
     internal void ShowPage(int page)
     {
-        string[] names = { "划词与快捷键", "让气泡和按钮更合你意", "连接你的翻译服务", "识别图片里的文字", "为不同应用设置规则", "输入，停顿，即可翻译" };
+        string[] names = { "划词与快捷键", "让气泡和按钮更合你意", "连接你的翻译服务", "识别图片里的文字", "为不同应用设置规则", "输入，停顿，即可翻译", "把电脑声音变成字幕" };
         for (int i = 0; i < pages.Length; i++) { pages[i].Visibility = i == page ? Visibility.Visible : Visibility.Collapsed; Ui.Bind(nav[i], Button.BackgroundProperty, i == page ? "AccentSoft" : "Surface"); }
         title.Text = names[page]; subtitle.Text = page == 1 ? "背景、边框、文字独立设置，透明度所见即所得。" : "保存立即生效，无需关闭设置或转入后台。";
     }

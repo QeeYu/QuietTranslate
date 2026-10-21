@@ -23,14 +23,7 @@ namespace QuietTranslate;
 // Only synthetic text. The renamed child apphost exercises the real Discord process policy.
 internal static class DiscordSelectionTest
 {
-    [DllImport("user32.dll")] private static extern bool AttachThreadInput(uint from, uint to, bool attach);
-    private static void Focus(IntPtr window)
-    {
-        uint target = Native.GetWindowThreadProcessId(window, out _), foreground = Native.GetWindowThreadProcessId(Native.GetForegroundWindow(), out _);
-        bool attached = foreground != 0 && target != 0 && foreground != target && AttachThreadInput(target, foreground, true);
-        try { Native.SetForegroundWindow(window); }
-        finally { if (attached) AttachThreadInput(target, foreground, false); }
-    }
+    private static void Focus(IntPtr window) => DesktopProbe.Focus(window);
     private const string Body = "UIA_METADATA_START timestamp 11:08\nFirst paragraph: 回复 / 更多 / 点击反应 are intentional words. 日本語 😀\nSecond paragraph: keep this selected sentence intact.\nUIA_METADATA_END reaction controls and hidden actions";
     private sealed record State(int StartX, int StartY, int EndX, int EndY, int AltX, int AltY, int SelectionStart, int SelectionLength, int MouseDowns, int MouseUps);
     private sealed class Field(string mode) : TextBox
@@ -79,7 +72,7 @@ internal static class DiscordSelectionTest
             Write(); stateTimer.Start();
         };
         var safety = new DispatcherTimer { Interval = TimeSpan.FromSeconds(25) }; safety.Tick += (_, _) => app.Shutdown(2);
-        window.Closed += (_, _) => { safety.Stop(); stateTimer.Stop(); app.Shutdown(); }; window.Show(); window.Activate(); safety.Start();
+        window.Closed += (_, _) => { safety.Stop(); stateTimer.Stop(); app.Shutdown(); }; window.Show(); DesktopProbe.ShowFixture(window); safety.Start();
     }
     private sealed class Handler(Func<string> expected) : HttpMessageHandler
     {
@@ -131,6 +124,8 @@ internal static class DiscordSelectionTest
                 }
                 try
                 {
+                    if (!await ClipboardWriter.CopyAsync(sentinel)) throw new Exception("Could not seed this isolated case");
+                    owned = Native.GetClipboardSequenceNumber();
                     string statePath = Path.Combine(folder, "state.json");
                     await DesktopProbe.UntilAsync(() => File.Exists(statePath), "Fixture not ready");
                     State Read() { using var stream = new FileStream(statePath, FileMode.Open, FileAccess.Read, FileShare.ReadWrite | FileShare.Delete); return JsonSerializer.Deserialize<State>(stream)!; }
@@ -225,13 +220,17 @@ internal static class DiscordSelectionTest
                     Stage(mode + ": passed");
                     tests.Add(new { name = mode, status = "PASS", gestures, buttonMs, originalTextPreserved = true, clipboardRestored = true, apiCalls = handler.Calls });
                 }
-                catch (Exception ex) { failed++; tests.Add(new { name = mode, status = "FAIL", error = ex.Message, state = trigger.State }); }
+                catch (Exception ex) { failed++; tests.Add(new { name = mode, status = "FAIL", error = ex.Message, state = trigger.State, clipboard = DesktopProbe.ClipboardHolder() }); }
                 finally { trigger.Enabled = false; bubble?.Close(); Native.mouse_event(4, 0, 0, 0, IntPtr.Zero); await Task.Delay(40); if (!process.HasExited) { process.Kill(); process.WaitForExit(); } }
             }
+            try
+            {
             if (!await ClipboardWriter.CopyAsync(sentinel)) throw new Exception("Could not seed native snapshot check");
             Stage("ownership check");
             owned = Native.GetClipboardSequenceNumber();
-            using var prior = ClipboardSnapshot.Capture() ?? throw new Exception("Native text snapshot unavailable");
+            ClipboardSnapshot? captured = null;
+            for (int attempt = 0; attempt < 80 && captured == null; attempt++) { captured = ClipboardSnapshot.Capture(); if (captured == null) await Task.Delay(25); }
+            using var prior = captured ?? throw new Exception("Native text snapshot unavailable");
             uint priorSequence = Native.GetClipboardSequenceNumber();
             const string newer = "Synthetic newer clipboard copy";
             if (!await ClipboardWriter.CopyAsync(newer)) throw new Exception("Could not seed newer clipboard copy");
@@ -239,6 +238,8 @@ internal static class DiscordSelectionTest
             if (!prior.Restore(priorSequence)) throw new Exception("Clipboard ownership check failed");
             await DesktopProbe.ReadExpectedAsync(newer);
             tests.Add(new { name = "preserve-newer-copy", status = "PASS" });
+            }
+            catch (Exception ex) { failed++; tests.Add(new { name = "preserve-newer-copy", status = "FAIL", error = ex.Message, clipboard = DesktopProbe.ClipboardHolder() }); }
         }
         finally
         {

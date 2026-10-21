@@ -94,7 +94,7 @@ internal static class CopyTest
                 {
                     var settings = new Settings(); string scope = Guid.NewGuid().ToString("N");
                     foreach (var s in settings.Services.Values.Concat(settings.OcrServices.Values)) { s.Endpoint = "https://example.invalid/copy-" + scope; s.CredentialId = scope; }
-                    int saves = 0; var w = new SettingsWindow(settings, _ => saves++);
+                    int saves = 0; var w = new SettingsWindow(settings, _ => saves++) { Topmost = true };
                     try
                     {
                         w.Show(); w.Activate(); await Task.Delay(150);
@@ -116,9 +116,10 @@ internal static class CopyTest
                                 if (mode == "command") ApplicationCommands.Copy.Execute(null, field);
                                 else if (mode == "keyboard") Native.TestChord(new Hotkey(2, 0x43));
                                 else await HoverTest.ClickAsync(item!);
+                                long injectionMs = watch.ElapsedMilliseconds;
                                 await Task.Delay(60); long responseMs = watch.ElapsedMilliseconds;
                                 bool responsive = !released.IsCompleted;
-                                observations[name + "-" + mode] = new { responseMs, responsive };
+                                observations[name + "-" + mode] = new { responseMs, injectionMs, responsive };
                                 Check(responseMs < (mode == "command" ? 160 : 260) && responsive, "settings copy blocked UI: " + name + "/" + mode + ", " + responseMs + " ms");
                             }
                             finally { releaseGate.TrySetResult(); await released; }

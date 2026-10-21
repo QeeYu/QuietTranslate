@@ -38,6 +38,7 @@ internal sealed class OcrService : IDisposable
             {
                 case OcrProvider.Local:
                     ApiSupport.Authenticate(request, s, key);
+                    // The same configurable budget applies to recognition as to text translation.
                     request.Content = ApiSupport.Json(new { image_base64 = base64, language }); break;
                 case OcrProvider.OCRSpace:
                     request.Headers.Add("apikey", key);
@@ -74,12 +75,16 @@ internal sealed class OcrService : IDisposable
                         case VisionThinkingMode.EnableThinkingFalse: visionBody["enable_thinking"] = false; break;
                         case VisionThinkingMode.ChatTemplateDisabled: visionBody["chat_template_kwargs"] = new { enable_thinking = false }; break;
                     }
+                    visionBody["max_tokens"] = Math.Clamp(s.MaxOutputTokens, 256, 65536);
                     request.Content = ApiSupport.Json(visionBody); break;
                 default:
                     ApiSupport.Authenticate(request, s, key);
                     request.Content = ApiSupport.Template(s, new() { ["{image_base64}"] = base64, ["{image_data_url}"] = "data:image/png;base64," + base64, ["{api_key}"] = key, ["{language}"] = language }); break;
             }
             using var doc = await ApiSupport.SendJson(client, request, ct); var root = doc.RootElement;
+            if (provider == OcrProvider.VisionAI && root.TryGetProperty("choices", out var choices) && choices.GetArrayLength() > 0 &&
+                choices[0].TryGetProperty("finish_reason", out var finish) && finish.ValueKind == JsonValueKind.String && finish.GetString() is string reason && reason != "stop")
+                throw new InvalidOperationException(reason == "length" ? "图片文字识别被输出上限截断，未发送翻译请求。请缩小选区或提高模型输出上限。" : "图片文字识别未完整结束，未发送翻译请求。请检查模型支持或缩小选区。");
             if (root.ValueKind == JsonValueKind.Object && ((root.TryGetProperty("IsErroredOnProcessing", out var failed) && failed.ValueKind == JsonValueKind.True) || root.TryGetProperty("error_code", out _) || root.TryGetProperty("error", out _) || (root.TryGetProperty("Response", out var response) && response.TryGetProperty("Error", out _)))) throw new InvalidOperationException("OCR 服务返回错误，请检查密钥、权限、图片格式和额度。");
             string result = ApiSupport.Extract(root, provider switch { OcrProvider.OCRSpace => "ParsedResults[].ParsedText", OcrProvider.Tencent => "Response.TextDetections[].DetectedText", OcrProvider.Baidu => "words_result[].words", OcrProvider.GoogleVision => "responses[0].fullTextAnnotation.text", OcrProvider.VisionAI => "choices[0].message.content", OcrProvider.Local => "text", _ => s.ResponsePath });
             if (string.IsNullOrWhiteSpace(result)) throw new InvalidOperationException("没有识别到文字。请缩小到清晰文字区域，或检查自定义返回路径。");

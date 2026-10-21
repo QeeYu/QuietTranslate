@@ -16,7 +16,9 @@ internal sealed class ServiceEditor : StackPanel
     private readonly Dictionary<string, string> pending;
     private readonly ComboBox choice = new(), profiles = new();
     private readonly ComboBox visionThinking = new() { Name = "OcrThinking", ItemsSource = new[] { "遵循模型默认（兼容优先）", "关闭思考 · 智谱 / 豆包兼容", "关闭思考 · 通义兼容", "关闭思考 · 本地服务兼容" } };
-    private readonly TextBox endpoint = Field(), model = Field(), appId = Field(), region = Field(), prompt = Multi(), body = Multi(), path = Field(), header = Field(), prefix = Field(), profileName = Field();
+    private readonly TextBox endpoint = Field(), model = Field(), appId = Field(), region = Field(), prompt = Multi(), body = Multi(), path = Field(), header = Field(), prefix = Field(), profileName = Field(), outputTokens = Field();
+    private readonly ComboBox modelList = new() { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 10) };
+    private int modelRevision;
     private readonly PasswordBox key = new();
     private readonly TextBlock keyStatus = new() { Name = "ServiceKeyStatus", TextWrapping = TextWrapping.Wrap, FontSize = 12 };
     private readonly Border keyBadge = new() { CornerRadius = new CornerRadius(7), Padding = new Thickness(10, 7, 10, 7), Margin = new Thickness(0, -5, 0, 12) };
@@ -30,7 +32,7 @@ internal sealed class ServiceEditor : StackPanel
     internal Provider Provider => (Provider)editing;
     internal OcrProvider OcrProvider => (OcrProvider)editing;
     internal ServiceSettings Config => ocr ? draft.OcrServices[OcrProvider] : draft.Services[Provider];
-    internal ServiceEditor(Settings draft, bool ocr, Dictionary<string, string> pending)
+    internal ServiceEditor(Settings draft, bool ocr, Dictionary<string, string> pending, HttpMessageHandler? modelHandler = null)
     {
         this.draft = draft; this.ocr = ocr; this.pending = pending;
         editing = ocr ? (int)draft.OcrProvider : (int)draft.Provider;
@@ -42,24 +44,30 @@ internal sealed class ServiceEditor : StackPanel
         Add(this, "密钥 · 留空保留已保存值", key); keyBadge.Child = keyStatus; Children.Add(keyBadge);
         Add(idArea, "应用 ID / SecretId / 百度 OCR API Key（非密钥部分）", appId); Children.Add(idArea);
         Add(modelArea, "模型名称 · 以服务商控制台为准", model);
-        var fetchModels = new Button { Content = "读取可用模型列表", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 10) };
-        var modelList = new ComboBox { Visibility = Visibility.Collapsed, Margin = new Thickness(0, 0, 0, 10) }; modelList.SelectionChanged += (_, _) => { if (modelList.SelectedItem is string name) model.Text = name; };
+        var fetchModels = new Button { Name = ocr ? "ReadOcrModels" : "ReadServiceModels", Content = "读取可用模型列表", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 0, 0, 10) };
+        modelList.Name = ocr ? "OcrModels" : "ServiceModels";
+        modelList.SelectionChanged += (_, _) => { if (modelList.SelectedItem is string name) model.Text = name; };
         fetchModels.Click += async (_, _) =>
         {
             fetchModels.IsEnabled = false;
+            int revision = modelRevision;
             try
             {
                 Commit(); using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(12));
                 var url = Settings.CompletionEndpoint(Provider.CustomAI, Config.Endpoint).AbsoluteUri; url = url[..^"/chat/completions".Length] + "/models";
-                using var client = ApiSupport.Client(); using var request = new HttpRequestMessage(HttpMethod.Get, url); ApiSupport.Authenticate(request, Config, Secret());
+                using var client = ApiSupport.Client(modelHandler); using var request = new HttpRequestMessage(HttpMethod.Get, url); ApiSupport.Authenticate(request, Config, Secret());
                 using var doc = await ApiSupport.SendJson(client, request, deadline.Token); string names = ApiSupport.Extract(doc.RootElement, "data[].id");
                 if (names.Length == 0) throw new InvalidOperationException("服务没有返回模型列表，请手动填写模型名。");
+                if (revision != modelRevision) return;
                 modelList.ItemsSource = names.Split('\n'); modelList.Visibility = Visibility.Visible; note.Text = "选择模型后保存；列表包含的模型不一定都适合翻译或图片识别。";
             }
-            catch (Exception) { note.Text = "读取模型列表失败或服务不支持此接口，请手动填写模型名称。"; }
+            catch (Exception) { if (revision == modelRevision) note.Text = "读取模型列表失败或服务不支持此接口，请手动填写模型名称。"; }
             finally { fetchModels.IsEnabled = true; }
         };
         modelArea.Children.Add(fetchModels); modelArea.Children.Add(modelList); Children.Add(modelArea);
+        outputTokens.Name = ocr ? "OcrOutputTokens" : "ServiceOutputTokens";
+        Add(aiArea, "最大输出 tokens（256–65536，以模型支持为准）", outputTokens);
+        aiArea.Children.Add(Ui.Hint("长段文字可提高上限；上限不是预先扣费量。不自动拆分或重试，请按模型能力设置。"));
         Add(regionArea, "服务区域", region); Children.Add(regionArea);
         Children.Add(anonymous); Children.Add(note);
         var forget = new Button { Content = "删除此地址的密钥", HorizontalAlignment = HorizontalAlignment.Left, Margin = new Thickness(0, 8, 0, 8) };
@@ -107,7 +115,7 @@ internal sealed class ServiceEditor : StackPanel
         }
         choice.SelectionChanged += (_, _) => { if (loading || choice.SelectedIndex < 0) return; Commit(); editing = choice.SelectedIndex; Load(); };
         key.PasswordChanged += (_, _) => { if (!loading) RefreshCredentialStatus(); };
-        endpoint.TextChanged += (_, _) => { if (!loading) RefreshCredentialStatus(); };
+        endpoint.TextChanged += (_, _) => { if (!loading) { InvalidateModels(); RefreshCredentialStatus(); } };
         anonymous.Checked += (_, _) => { if (!loading) RefreshCredentialStatus(); }; anonymous.Unchecked += (_, _) => { if (!loading) RefreshCredentialStatus(); };
         loading = true; choice.SelectedIndex = editing; loading = false; Load();
     }
@@ -118,6 +126,7 @@ internal sealed class ServiceEditor : StackPanel
         if (NeedsIdentity && !s.Endpoint.Equals(endpoint.Text.Trim(), StringComparison.OrdinalIgnoreCase) && appId.Text == loadedIdentity) appId.Clear();
         s.Endpoint = endpoint.Text.Trim(); s.Model = model.Text.Trim(); s.AppId = appId.Text.Trim(); s.Region = region.Text.Trim(); s.DisableThinking = thinking.IsChecked == true; s.WordMeanings = word.IsChecked == true; s.AllowAnonymous = anonymous.IsChecked == true;
         s.Prompt = prompt.Text; s.BodyTemplate = body.Text; s.ResponsePath = path.Text.Trim(); s.KeyHeader = header.Text.Trim(); s.KeyPrefix = prefix.Text; s.FormEncoded = form.IsChecked == true;
+        if (int.TryParse(outputTokens.Text, out int tokens)) s.MaxOutputTokens = tokens;
         if (ocr) s.VisionThinking = (VisionThinkingMode)Math.Max(0, visionThinking.SelectedIndex);
         if (key.Password.Length > 0) { if (!string.IsNullOrWhiteSpace(key.Password)) pending[Target()] = key.Password.Trim(); key.Clear(); }
         if (NeedsIdentity) pending[Target() + "/id"] = s.AppId;
@@ -150,6 +159,8 @@ internal sealed class ServiceEditor : StackPanel
     internal void Validate()
     {
         Commit(); if (ocr && OcrProvider == OcrProvider.Windows) return;
+        if (((!ocr && Settings.IsAI(Provider)) || (ocr && OcrProvider == OcrProvider.VisionAI)) &&
+            (!int.TryParse(outputTokens.Text, out int tokens) || tokens is < 256 or > 65536)) throw new ArgumentException("最大输出 tokens 须为 256–65536，并在当前模型支持范围内。");
         ApiSupport.Endpoint(Config.Endpoint);
         if (ocr && OcrProvider == OcrProvider.Local && !ApiSupport.Endpoint(Config.Endpoint).IsLoopback) throw new ArgumentException("本机服务只允许 localhost / 127.0.0.1 / ::1 地址。");
         if ((!ocr && Settings.IsAI(Provider)) || (ocr && OcrProvider == OcrProvider.VisionAI)) { if (Config.Model.Length == 0) throw new ArgumentException("请填写模型名称。"); }
@@ -157,8 +168,10 @@ internal sealed class ServiceEditor : StackPanel
     }
     private void Load()
     {
+        InvalidateModels();
         loading = true;
         var s = Config;
+        outputTokens.Text = Math.Clamp(s.MaxOutputTokens, 256, 65536).ToString();
         if (NeedsIdentity && s.AppId.Length == 0) s.AppId = pending.TryGetValue(Target() + "/id", out var identity) ? identity : Credentials.Get(Target() + "/id");
         endpoint.Text = s.Endpoint; model.Text = s.Model; appId.Text = s.AppId; region.Text = s.Region; key.Clear(); thinking.IsChecked = s.DisableThinking; word.IsChecked = s.WordMeanings; anonymous.IsChecked = s.AllowAnonymous;
         loadedIdentity = s.AppId;
@@ -184,6 +197,7 @@ internal sealed class ServiceEditor : StackPanel
         loading = false; RefreshCredentialStatus();
     }
     private static ServiceSettings Clone(ServiceSettings s) => JsonSerializer.Deserialize<ServiceSettings>(JsonSerializer.Serialize(s))!;
+    private void InvalidateModels() { modelRevision++; modelList.ItemsSource = null; modelList.Visibility = Visibility.Collapsed; }
     private static TextBox Field() => new() { FontSize = 13 };
     private static TextBox Multi() => new() { FontSize = 12, AcceptsReturn = true, TextWrapping = TextWrapping.Wrap, MinHeight = 90, MaxHeight = 180, VerticalScrollBarVisibility = ScrollBarVisibility.Auto };
     private static void Add(StackPanel panel, string label, UIElement element) { panel.Children.Add(Ui.Hint(label)); if (element is FrameworkElement f) f.Margin = new Thickness(0, 6, 0, 12); panel.Children.Add(element); }

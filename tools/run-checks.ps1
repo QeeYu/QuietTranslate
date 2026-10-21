@@ -1,12 +1,15 @@
 param(
     [string]$DotNet = 'dotnet',
     [string]$Output = 'work/checks',
-    [switch]$SkipBuild
+    [switch]$SkipBuild,
+    [string[]]$Group = @('all')
 )
 $ErrorActionPreference = 'Stop'
 $projectRoot = Split-Path $PSScriptRoot -Parent
 Push-Location $projectRoot
 try {
+    $Group = @($Group | ForEach-Object { $_ -split ',' })
+    foreach ($name in $Group) { if ($name -notin @('all','audit','speech','clipboard','ocr','selection','ui')) { throw "Unknown check group: $name" } }
     if (-not $SkipBuild) {
         & $DotNet build QuietTranslate.csproj -c Release
         if ($LASTEXITCODE -ne 0) { throw 'Product build failed.' }
@@ -16,8 +19,18 @@ try {
     $destination = [IO.Path]::GetFullPath((Join-Path $projectRoot $Output))
     New-Item -ItemType Directory -Force -Path $destination | Out-Null
     $hostExecutable = Join-Path $projectRoot 'tests/bin/Release/net8.0-windows10.0.19041.0/QuietTranslate.Tests.exe'
-    $cases = @('self-test','v13-test','refinement-test','upgrade-test','bubble-test','hover-test','lifecycle-test','interaction-test','motion-test','polish-test','copy-test','growth-repro','ui-smoke','discord-selection-test','ocr-settings-test')
-    if (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") { $cases += 'table-test' }
+    $groups = [ordered]@{
+        audit = @('audit-regression-test')
+        # speech-test already exercises the same App lifecycle fixture as speech-app-test.
+        speech = @('direct-captions-test','speech-test','speech-polish-test')
+        clipboard = @('copy-test','clipboard-race-test')
+        ocr = @('ocr-settings-test')
+        selection = @('interaction-test','discord-selection-test')
+        ui = @('self-test','v13-test','refinement-test','upgrade-test','bubble-test','hover-test','lifecycle-test','motion-test','polish-test','growth-repro','ui-smoke')
+    }
+    if (Test-Path "${env:ProgramFiles(x86)}\Microsoft\Edge\Application\msedge.exe") { $groups.selection += 'table-test' }
+    $selected = if ($Group -contains 'all') { @($groups.Keys) } else { $Group }
+    $cases = @($selected | ForEach-Object { $groups[$_] } | Select-Object -Unique)
     $summary = @()
     foreach ($case in $cases) {
         $target = Join-Path $destination $case

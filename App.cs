@@ -55,10 +55,11 @@ public sealed partial class App : Application
         showWindow = new EventWaitHandle(false, EventResetMode.AutoReset, eventName);
         showWindowRegistration = ThreadPool.RegisterWaitForSingleObject(showWindow, (_, _) => { if (!exiting) Dispatcher.BeginInvoke(new Action(OpenSettings)); }, null, Timeout.Infinite, false);
         try { settings = initial ?? Settings.Load(); } catch (Exception ex) { MessageBox.Show(ex.Message, "轻译"); Shutdown(); return; }
+        InitializeSpeech(testScope);
         Ui.Theme = settings.Theme; SmoothScroll.Speed = settings.WheelScrollSpeed;
-        hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) ToggleManual(); else _ = ExecuteAsync(id == 2); };
+        hotkeys = new Hotkeys(); hotkeys.Pressed += id => { if (recording) return; if (id == 3) TogglePause(); else if (id == 4) ToggleManual(); else if (id == 5) _ = ToggleSpeechAsync(); else _ = ExecuteAsync(id == 2); };
         selectionTrigger = new SelectionTrigger((source, anchor, text) => _ = ExecuteAsync(false, source, anchor, text), () => settings, () => mode == AppMode.Compatibility);
-        trayMenu = new TrayMenu(() => OpenManual(), () => _ = ExecuteAsync(true), OpenImage, TogglePause, OpenSettings, () => Shutdown());
+        trayMenu = new TrayMenu(() => OpenManual(), () => _ = ExecuteAsync(true), OpenImage, TogglePause, OpenSettings, () => Shutdown(), () => _ = ToggleSpeechAsync(), () => speechWindow?.SetLocked(false));
         tray = new Forms.NotifyIcon { Icon = AppIcons.Active, Text = "轻译 · 已启用", Visible = true }; tray.DoubleClick += (_, _) => Dispatcher.BeginInvoke(new Action(OpenSettings));
         tray.MouseUp += (_, e) => { if (e.Button == Forms.MouseButtons.Right) Dispatcher.BeginInvoke(new Action(() => trayMenu.Show())); };
         policyTimer.Tick += (_, _) => RefreshState(); policyTimer.Start();
@@ -87,7 +88,7 @@ public sealed partial class App : Application
         try { using var process = Process.GetProcessById((int)id); rule = FindRule(settings, process.ProcessName); } catch { }
         mode = rule?.Mode ?? AppMode.Normal; sourceLanguage = rule?.SourceLanguage ?? "auto";
         bool nextBlocked = paused || mode == AppMode.Paused;
-        try { hotkeys.Apply(settings, nextBlocked, nextBlocked && (settings.PauseManual || mode == AppMode.Paused)); }
+        try { hotkeys.Apply(settings, nextBlocked, nextBlocked && (settings.PauseManual || mode == AppMode.Paused), speech?.Enabled == true); }
         catch (Exception ex) { if (force) throw; if (tray != null) tray.Text = "轻译 · 快捷键冲突，请打开设置"; System.Diagnostics.Debug.WriteLine(ex.GetType().Name); }
         if (selectionTrigger != null) try { selectionTrigger.Enabled = !nextBlocked && settings.SelectionButtonEnabled && mode != AppMode.HotkeysOnly; } catch { if (tray != null) tray.Text = "轻译 · 选词监听不可用"; }
         if (nextBlocked && !blocked) { operation?.Cancel(); bubble?.Close(); selectionTrigger?.Hide(); if (settings.PauseManual || mode == AppMode.Paused) manual?.CancelTranslation(); }
@@ -97,8 +98,9 @@ public sealed partial class App : Application
         manual?.SetPaused(blocked && (settings.PauseManual || mode == AppMode.Paused));
         if (tray != null) { tray.Text = paused ? "轻译 · 已手动暂停" : mode == AppMode.Paused ? "轻译 · 当前应用自动暂停" : "轻译 · 已启用"; tray.Icon = blocked ? AppIcons.Paused : AppIcons.Active; }
         trayMenu?.Refresh(settings, paused, blocked);
+        RefreshSpeechTray();
     }
-    private void TogglePause() { paused = !paused; RefreshState(true); }
+    private void TogglePause() { paused = !paused; if (paused) _ = StopSpeechAsync(); RefreshState(true); }
     private void OpenImage()
     {
         RefreshState(); if (blocked) return;
@@ -113,11 +115,13 @@ public sealed partial class App : Application
         settingsWindow = new SettingsWindow(settings, value =>
         {
             var old = settings;
-            try { hotkeys!.Apply(value, false); value.Save(); settings = value; Ui.Theme = settings.Theme; SmoothScroll.Speed = settings.WheelScrollSpeed; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); }
+            bool speechKeyChanged = settingsWindow?.CredentialChanged(value.Speech.SecretTarget) == true;
+            try { hotkeys!.Apply(value, false); if (hotkeys.SpeechUnavailable) throw new InvalidOperationException("实时语音功能快捷键被占用，请更换后保存。"); value.Save(); settings = value; Ui.Theme = settings.Theme; SmoothScroll.Speed = settings.WheelScrollSpeed; RefreshState(true); bubble?.ApplyAppearance(value); manual?.RefreshOptions(); _ = ApplySpeechOptionsAsync(old.Speech, speechKeyChanged); }
             catch { settings = old; Ui.Theme = old.Theme; SmoothScroll.Speed = old.WheelScrollSpeed; RefreshState(true); throw; }
-        });
+        }, toggleSpeech: () => _ = ToggleSpeechAsync());
         settingsWindow.RecordingChanged += value => { recording = value; if (value) { hotkeys?.Suspend(); if (selectionTrigger != null) selectionTrigger.Enabled = false; } else if (!exiting) RefreshState(true); };
         settingsWindow.Closed += (_, _) => { settingsWindow = null; recording = false; if (!exiting) RefreshState(true); }; settingsWindow.Show();
+        if (hotkeys?.SpeechUnavailable == true) settingsWindow.ReportSpeechShortcutConflict();
     }
     private void OpenManual(string? text = null, string source = "auto")
     {
@@ -202,7 +206,10 @@ public sealed partial class App : Application
     private void Cleanup()
     {
         showWindowRegistration?.Unregister(null); showWindow?.Dispose();
-        exiting = true; policyTimer.Stop(); selectionTrigger?.Dispose(); operation?.Cancel(); bubble?.Close(); manual?.Close(); settingsWindow?.Close(); hotkeys?.Dispose(); translator.Dispose(); ocr.Dispose();
+        exiting = true; policyTimer.Stop(); selectionTrigger?.Dispose(); operation?.Cancel(); bubble?.Close(); manual?.Close(); settingsWindow?.Close(); hotkeys?.Dispose(); ocr.Dispose();
+        speech?.RequestDisable(); speechWindow?.Close();
+        try { speech?.DisableAsync().GetAwaiter().GetResult(); } catch { MessageBox.Show("语音记录清理未完成，下次启动会重试。", "轻译"); }
+        translator.Dispose();
         trayMenu?.Dispose(); if (tray != null) { tray.Visible = false; tray.Dispose(); } instance?.Dispose();
     }
 }

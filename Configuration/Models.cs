@@ -14,6 +14,7 @@ public sealed class ServiceSettings
     public string Model { get; set; } = "deepseek-flash";
     public string Region { get; set; } = "";
     public bool DisableThinking { get; set; } = true;
+    public int MaxOutputTokens { get; set; } = 4096;
     public VisionThinkingMode VisionThinking { get; set; } = VisionThinkingMode.Default;
     [System.Text.Json.Serialization.JsonIgnore]
     public string AppId { get; set; } = ""; // Identifiers (including Baidu API Key) also live in Credential Manager.

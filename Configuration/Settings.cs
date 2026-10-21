@@ -6,6 +6,7 @@ namespace QuietTranslate;
 
 public sealed class Settings
 {
+    public SpeechOptions Speech { get; set; } = new();
     public ThemeMode Theme { get; set; } = ThemeMode.System;
     public Provider Provider { get; set; }
     public Dictionary<Provider, ServiceSettings> Services { get; set; } = Defaults();
@@ -50,8 +51,8 @@ public sealed class Settings
     public bool SelectionButtonEnabled { get; set; } = true;
     [System.Text.Json.Serialization.JsonIgnore]
     public ServiceSettings Current => Services[Provider];
-    public static readonly string DirectoryPath = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuietTranslate");
-    public static readonly string FilePath = Path.Combine(DirectoryPath, "settings.json");
+    public static string DirectoryPath { get; internal set; } = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "QuietTranslate");
+    public static string FilePath => Path.Combine(DirectoryPath, "settings.json");
 
     public static Settings Load() => SettingsStore.Load();
     public void Save() => SettingsStore.Save(this);
@@ -102,5 +103,3 @@ public sealed class Settings
         return result;
     }
 }
-
-// Windows Credential Manager encrypts secrets for the current Windows user.

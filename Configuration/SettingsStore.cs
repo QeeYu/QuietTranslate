@@ -14,7 +14,8 @@ internal static class SettingsStore
         if (!File.Exists(FilePath)) return new();
         try
         {
-            var value = JsonSerializer.Deserialize<Settings>(File.ReadAllText(FilePath)) ?? new();
+            string json = File.ReadAllText(FilePath);
+            var value = JsonSerializer.Deserialize<Settings>(json) ?? new();
             if (!Enum.IsDefined(value.Provider) || value.Services == null) throw new FormatException();
             foreach (var pair in new Settings().Services) value.Services.TryAdd(pair.Key, pair.Value);
             value.OcrServices ??= Settings.OcrDefaults();
@@ -22,6 +23,15 @@ internal static class SettingsStore
             if (!Enum.IsDefined(value.OcrProvider)) value.OcrProvider = OcrProvider.OCRSpace;
             if (!Enum.IsDefined(value.Theme)) value.Theme = ThemeMode.System;
             value.AppRules ??= new();
+            value.Speech ??= new();
+            using (var saved = JsonDocument.Parse(json))
+                if (saved.RootElement.TryGetProperty("Speech", out var oldSpeech) && oldSpeech.ValueKind == JsonValueKind.Object && !oldSpeech.TryGetProperty("SubtitleLayoutVersion", out _))
+                { if (!oldSpeech.TryGetProperty("ControlsHidden", out _)) value.Speech.ControlsHidden = false; value.Speech.Bilingual = false; }
+            if (value.Speech.SubtitleLayoutVersion < 4)
+            {
+                if (value.Speech.WindowHeight == 170) value.Speech.WindowHeight = value.Speech.ControlsHidden ? 120 : 144;
+                value.Speech.SubtitleLayoutVersion = 4;
+            }
             value.SavedServices ??= new();
             value.CopyWaitMs = Math.Clamp(value.CopyWaitMs, 300, 2500);
             value.BubbleOpacity = double.IsFinite(value.BubbleOpacity) ? Math.Clamp(value.BubbleOpacity, 0, 1) : .92;

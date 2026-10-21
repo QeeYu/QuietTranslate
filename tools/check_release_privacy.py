@@ -5,6 +5,7 @@ This is a release guard, not a guarantee that every possible secret can be detec
 """
 from pathlib import Path
 import argparse
+import hashlib
 import io
 import json
 import re
@@ -23,7 +24,14 @@ RULES = {
     'personal-profile-path': rb'(?i)[A-Z]:[\\/]Users[\\/](?!Public\b|Default\b|<)[A-Za-z0-9_.-]+[\\/]',
 }
 RULES = {name: re.compile(pattern) for name, pattern in RULES.items()}
-FORBIDDEN = {'settings.json', 'hosts.yml', 'id_rsa', 'id_ed25519'}
+FORBIDDEN = {'settings.json', 'hosts.yml', 'id_rsa', 'id_ed25519', 'cleanup.pending'}
+# Official NuGet NAudio 2.2.1 binaries embed their author's build-machine PDB
+# paths. Keep them intact; exempt only that rule for these exact binary hashes.
+# Credential rules still inspect every byte, including trusted dependencies.
+UPSTREAM_BUILD_PATH_HASHES = {
+    'naudio.core.dll': 'fcf493fc47a2f478a65303886b975fbdbf714cbb1f2d79f7fce97e4bb16b01a8',
+    'naudio.wasapi.dll': '618ef0e49d64e7a66dfe64bbf6ae81705b9d9683d8a9f321e5c3024d666bdf82',
+}
 
 def git(*args):
     return subprocess.check_output(['git', '-c', 'core.quotepath=false', *args], cwd=ROOT)
@@ -34,16 +42,20 @@ def main():
     parser.add_argument('--package', action='append', default=[])
     parser.add_argument('--report')
     args = parser.parse_args()
-    findings = []; counts = {'workingFiles': 0, 'historyBlobs': 0, 'archiveEntries': 0}
+    findings = []; counts = {'workingFiles': 0, 'historyBlobs': 0, 'archiveEntries': 0, 'verifiedUpstreamBuildPaths': 0}
 
     def inspect(name, data, area):
         parts = Path(name).parts; base = Path(name).name.lower()
-        if base in FORBIDDEN or base == '.env' or base.startswith('.env.') or Path(base).suffix in ('.pfx', '.p12', '.pem', '.key'):
+        private_json = base.endswith('.json') and base.startswith(('settings.', 'credentials', 'secrets'))
+        if base in FORBIDDEN or private_json or base == '.env' or base.startswith('.env.') or Path(base).suffix in ('.pfx', '.p12', '.pem', '.key', '.qth', '.dmp', '.log'):
             findings.append({'area': area, 'file': name, 'rule': 'private-file'})
-        if any(part.lower() in ('appdata', '.ssh', '.aws', '.azure') for part in parts):
+        if any(part.lower() in ('appdata', '.ssh', '.aws', '.azure', 'livehistory') for part in parts):
             findings.append({'area': area, 'file': name, 'rule': 'private-directory'})
         # Check UTF-8/plain bytes and ASCII literals stored as UTF-16 in managed binaries.
         for rule, pattern in RULES.items():
+            if rule == 'personal-profile-path' and UPSTREAM_BUILD_PATH_HASHES.get(base) == hashlib.sha256(data).hexdigest():
+                counts['verifiedUpstreamBuildPaths'] += 1
+                continue
             for candidate in (data, data.replace(b'\x00', b'')):
                 matches = list(pattern.finditer(candidate))
                 if rule == 'literal-credential':

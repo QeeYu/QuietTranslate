@@ -12,10 +12,12 @@ internal sealed class TrayMenu : IDisposable
 {
     internal ContextMenu Menu { get; } = new() { Placement = PlacementMode.MousePoint, MinWidth = 274, StaysOpen = false };
     private readonly MenuItem manual, capture, pause;
+    private readonly MenuItem? speech;
     private readonly Native.HookProc mouseProc;
     private IntPtr mouseHook;
     private readonly TextBlock state = new() { FontSize = 11, Margin = new Thickness(0, 3, 0, 0) };
-    internal TrayMenu(Action input, Action screenshot, Action image, Action togglePause, Action settings, Action exit)
+    private string baseState = "轻翼已就绪";
+    internal TrayMenu(Action input, Action screenshot, Action image, Action togglePause, Action settings, Action exit, Action? toggleSpeech = null, Action? unlockSpeech = null)
     {
         Ui.Apply(Menu);
         var brand = new StackPanel { Margin = new Thickness(2, 4, 8, 6) };
@@ -25,6 +27,11 @@ internal sealed class TrayMenu : IDisposable
         manual = Add("输入翻译", "\uE8D2", input);
         capture = Add("截图翻译", "\uE722", screenshot);
         Add("识别图片…", "\uEB9F", image);
+        if (toggleSpeech != null)
+        {
+            speech = Add("开启实时语音翻译", "\uE720", toggleSpeech);
+            if (unlockSpeech != null) Add("解锁语音字幕", "\uE785", unlockSpeech);
+        }
         Menu.Items.Add(new Separator());
         pause = Add("暂停翻译", "\uE769", togglePause);
         Add("设置", "\uE713", settings);
@@ -45,9 +52,15 @@ internal sealed class TrayMenu : IDisposable
     internal void Refresh(Settings settings, bool paused, bool blocked)
     {
         Ui.Apply(Menu);
-        state.Text = paused ? "轻翼休息中 · 已手动暂停" : blocked ? "当前应用已自动暂停" : "轻翼已就绪 · 无历史记录";
+        state.Text = baseState = paused ? "轻翼休息中 · 已手动暂停" : blocked ? "当前应用划词已自动暂停" : "轻翼已就绪";
         pause.Header = paused ? "恢复翻译" : "暂停翻译"; ((TextBlock)pause.Icon).Text = paused ? "\uE768" : "\uE769";
         pause.InputGestureText = settings.PauseHotkey; manual.InputGestureText = settings.ManualHotkey; capture.InputGestureText = settings.ScreenshotHotkey;
+    }
+    internal void RefreshSpeech(bool enabled, SpeechOptions options)
+    {
+        if (speech == null) return;
+        state.Text = baseState + (enabled ? " · 语音已开启" : " · 语音关闭");
+        speech.Header = enabled ? "关闭实时语音翻译并清空记录" : "开启实时语音翻译"; speech.InputGestureText = options.Hotkey;
     }
     internal void Show() { Menu.IsOpen = false; Menu.IsOpen = true; }
     private IntPtr OnMouse(int code, IntPtr message, IntPtr data)
